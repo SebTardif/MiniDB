@@ -1,0 +1,128 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "minidb"
+version = "1.0.0"
+description = "A miniature in-memory database with SQL-like query support"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "MiniDB Contributors" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/sebtardif/MiniDB"
+Repository = "https://github.com/sebtardif/MiniDB"
+Issues = "https://github.com/sebtardif/MiniDB/issues"
+Changelog = "https://github.com/sebtardif/MiniDB/blob/main/CHANGELOG.md"
+
+# ---------------------------------------------------------------------------
+# Setuptools
+# ---------------------------------------------------------------------------
+[tool.setuptools.packages.find]
+include = ["minidb*"]
+
+# ---------------------------------------------------------------------------
+# Ruff – linting & formatting (replaces flake8 + black + isort)
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",    # line too long (handled by formatter)
+    "SIM108",  # use ternary operator (can hurt readability)
+    "N801",    # class name convention (TypeError_, SyntaxError_ avoid shadowing builtins)
+    "N818",    # exception naming (same reason as N801)
+    "N999",    # invalid module name
+    "UP031",   # use f-string (allow % formatting in existing code)
+    "RUF012",  # mutable class attribute (KEYWORDS dict is intentionally a class constant)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["minidb"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# Mypy – static type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = false
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = false
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["minidb"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 70
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ ==",
+]
+
+# ---------------------------------------------------------------------------
+# Semantic Release – auto versioning from conventional commits
+# ---------------------------------------------------------------------------
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+version_variables = ["minidb/__init__.py:__version__"]
+branch = "main"
+commit_message = "chore(release): v{version}"
+build_command = "python -m build"
+
+[tool.semantic_release.changelog]
+changelog_file = "CHANGELOG.md"
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = [
+    "build", "chore", "ci", "docs", "feat", "fix",
+    "perf", "refactor", "style", "test",
+]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]

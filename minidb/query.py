@@ -1,28 +1,32 @@
 """Query execution engine for MiniDB."""
 
-from typing import Any, Optional, Union
 from collections import defaultdict
+from typing import Any
 
+from .errors import InvalidQueryError, TableNotFoundError
 from .parser import (
-    SelectQuery, InsertQuery, UpdateQuery, DeleteQuery,
-    CreateTableQuery, DropTableQuery,
-    WhereClause, Condition, JoinClause, SelectColumn, OrderByItem
+    Condition,
+    CreateTableQuery,
+    DeleteQuery,
+    DropTableQuery,
+    InsertQuery,
+    OrderByItem,
+    SelectColumn,
+    SelectQuery,
+    UpdateQuery,
+    WhereClause,
 )
 from .planner import QueryPlanner, ScanType
 from .table import Table
-from .column import Column, Schema
-from .errors import (
-    TableNotFoundError, ColumnNotFoundError, InvalidQueryError
-)
-from .types import Row, QueryResult
+from .types import QueryResult, Row
 
 
 class QueryExecutor:
     """Executes parsed SQL queries against the database."""
-    
+
     def __init__(self, tables: dict[str, Table]):
         self.tables = tables
-    
+
     def execute(self, query) -> QueryResult:
         """Execute a parsed query."""
         if isinstance(query, SelectQuery):
@@ -38,22 +42,22 @@ class QueryExecutor:
         elif isinstance(query, DropTableQuery):
             return self.execute_drop_table(query)
         else:
-            raise InvalidQueryError(f"Unknown query type: {type(query)}")
-    
+            raise InvalidQueryError(f'Unknown query type: {type(query)}')
+
     def execute_select(self, query: SelectQuery) -> list[Row]:
         """Execute a SELECT query."""
         # Get the main table
         if query.table not in self.tables:
             raise TableNotFoundError(query.table)
-        
+
         main_table = self.tables[query.table]
-        
+
         # Get rows based on query plan
         if query.joins:
             rows = self._execute_join(main_table, query)
         else:
             rows = self._execute_table_scan(main_table, query)
-        
+
         # Apply GROUP BY
         if query.group_by:
             rows = self._execute_group_by(rows, query)
@@ -63,24 +67,24 @@ class QueryExecutor:
         else:
             # Project columns
             rows = self._project_columns(rows, query.columns, query.table)
-        
+
         # Apply ORDER BY
         if query.order_by:
             rows = self._execute_order_by(rows, query.order_by)
-        
+
         # Apply LIMIT
         if query.limit is not None:
-            rows = rows[:query.limit]
-        
+            rows = rows[: query.limit]
+
         return rows
-    
+
     def _execute_table_scan(self, table: Table, query: SelectQuery) -> list[tuple[int, Row]]:
         """Execute a table scan with optional WHERE filtering."""
         planner = QueryPlanner(table)
         plan = planner.plan_select(query)
-        
+
         rows = []
-        
+
         if plan.scan_type == ScanType.INDEX_SCAN:
             # Use index for equality lookup
             index = table.get_index(plan.index_column)
@@ -107,116 +111,113 @@ class QueryExecutor:
                 if query.where and not self._evaluate_where(row, query.where):
                     continue
                 rows.append((row_id, row))
-        
+
         # Apply remaining WHERE conditions (for index scans)
         if query.where and plan.scan_type in (ScanType.INDEX_SCAN, ScanType.INDEX_RANGE_SCAN):
-            rows = [(rid, row) for rid, row in rows 
-                    if self._evaluate_where(row, query.where)]
-        
+            rows = [(rid, row) for rid, row in rows if self._evaluate_where(row, query.where)]
+
         return rows
-    
+
     def _execute_join(self, left_table: Table, query: SelectQuery) -> list[tuple[int, Row]]:
         """Execute a JOIN query."""
-        rows = []
-        
+
         # Get all rows from left table
         left_rows = list(left_table.scan())
-        
+
         for join in query.joins:
             if join.table not in self.tables:
                 raise TableNotFoundError(join.table)
-            
+
             right_table = self.tables[join.table]
             right_rows = list(right_table.scan())
-            
+
             # Build index on right table for join column
             right_index = defaultdict(list)
             for rid, row in right_rows:
                 key = row.get(join.right_column)
                 if key is not None:
                     right_index[key].append((rid, row))
-            
+
             # Perform nested loop join
             new_rows = []
             for left_id, left_row in left_rows:
                 left_key = left_row.get(join.left_column)
                 matches = right_index.get(left_key, [])
-                
+
                 if matches:
-                    for right_id, right_row in matches:
+                    for _right_id, right_row in matches:
                         # Merge rows with table prefixes
                         merged = {}
                         for col, val in left_row.items():
                             merged[col] = val
                             if query.table:
-                                merged[f"{query.table}.{col}"] = val
+                                merged[f'{query.table}.{col}'] = val
                         for col, val in right_row.items():
                             if col not in merged:  # Don't overwrite left table columns
                                 merged[col] = val
-                            merged[f"{join.table}.{col}"] = val
+                            merged[f'{join.table}.{col}'] = val
                         new_rows.append((left_id, merged))
                 elif join.join_type == 'LEFT':
                     # Left join: include left row with NULLs for right columns
                     merged = dict(left_row)
                     for col in right_table.columns:
                         merged[col] = None
-                        merged[f"{join.table}.{col}"] = None
+                        merged[f'{join.table}.{col}'] = None
                     new_rows.append((left_id, merged))
-            
+
             left_rows = new_rows
-        
+
         # Apply WHERE clause
         if query.where:
-            left_rows = [(rid, row) for rid, row in left_rows 
-                        if self._evaluate_where(row, query.where)]
-        
+            left_rows = [(rid, row) for rid, row in left_rows if self._evaluate_where(row, query.where)]
+
         return left_rows
-    
-    def _find_index_condition(self, where: WhereClause, column: str) -> Optional[Condition]:
+
+    def _find_index_condition(self, where: WhereClause, column: str) -> Condition | None:
         """Find the condition that uses the index column."""
         if not where:
             return None
-        
+
         for cond in where.conditions:
             if isinstance(cond, Condition) and cond.column == column:
                 return cond
-        
+
         return None
-    
+
     def _evaluate_where(self, row: Row, where: WhereClause) -> bool:
         """Evaluate a WHERE clause against a row."""
         results = []
-        
+
         for cond in where.conditions:
             if isinstance(cond, Condition):
                 results.append(self._evaluate_condition(row, cond))
             elif isinstance(cond, WhereClause):
                 results.append(self._evaluate_where(row, cond))
-        
+
         if where.operator == 'AND':
             return all(results)
         else:  # OR
             return any(results)
-    
+
     def _evaluate_condition(self, row: Row, condition: Condition) -> bool:
         """Evaluate a single condition against a row."""
         # Try with table prefix first
         col_name = condition.column
         if condition.table_alias:
-            prefixed = f"{condition.table_alias}.{col_name}"
+            prefixed = f'{condition.table_alias}.{col_name}'
             if prefixed in row:
                 col_name = prefixed
-        
+
         if col_name not in row:
             return False
-        
+
         value = row[col_name]
         cond_value = condition.value
         op = condition.operator
-        
+
         if value is None:
             return False
-        
+
         if op == '=':
             return value == cond_value
         elif op == '!=':
@@ -233,12 +234,13 @@ class QueryExecutor:
             return self._match_like(str(value), str(cond_value))
         elif op == 'IN':
             return value in cond_value
-        
+
         return False
-    
+
     def _match_like(self, value: str, pattern: str) -> bool:
         """Match a value against a LIKE pattern."""
         import re
+
         # Convert SQL LIKE pattern to regex
         # % matches any sequence, _ matches single character
         regex_pattern = '^'
@@ -250,75 +252,67 @@ class QueryExecutor:
             else:
                 regex_pattern += re.escape(char)
         regex_pattern += '$'
-        
+
         return bool(re.match(regex_pattern, value, re.IGNORECASE))
-    
+
     def _has_aggregates(self, columns: list[SelectColumn]) -> bool:
         """Check if any column has an aggregate function."""
         return any(col.aggregate for col in columns)
-    
+
     def _execute_group_by(self, rows: list[tuple[int, Row]], query: SelectQuery) -> list[Row]:
         """Execute GROUP BY aggregation."""
         groups = defaultdict(list)
-        
-        for row_id, row in rows:
+
+        for _row_id, row in rows:
             key = tuple(row.get(col) for col in query.group_by)
             groups[key].append(row)
-        
+
         results = []
         for key, group_rows in groups.items():
             result_row = {}
-            
+
             # Add group by columns
             for i, col in enumerate(query.group_by):
                 result_row[col] = key[i]
-            
+
             # Add aggregate columns
             for col in query.columns:
                 if col.aggregate:
-                    agg_value = self._compute_aggregate(
-                        col.aggregate.function,
-                        col.aggregate.column,
-                        group_rows
-                    )
-                    agg_name = col.alias or f"{col.aggregate.function}({col.aggregate.column})"
+                    agg_value = self._compute_aggregate(col.aggregate.function, col.aggregate.column, group_rows)
+                    agg_name = col.alias or f'{col.aggregate.function}({col.aggregate.column})'
                     result_row[agg_name] = agg_value
                 elif col.name not in result_row and col.name != '*':
                     result_row[col.name] = group_rows[0].get(col.name)
-            
+
             results.append(result_row)
-        
+
         return results
-    
+
     def _execute_aggregation(self, rows: list[tuple[int, Row]], columns: list[SelectColumn]) -> list[Row]:
         """Execute aggregation without GROUP BY."""
         row_list = [row for _, row in rows]
         result_row = {}
-        
+
         for col in columns:
             if col.aggregate:
-                agg_value = self._compute_aggregate(
-                    col.aggregate.function,
-                    col.aggregate.column,
-                    row_list
-                )
-                agg_name = col.alias or f"{col.aggregate.function}({col.aggregate.column})"
+                agg_value = self._compute_aggregate(col.aggregate.function, col.aggregate.column, row_list)
+                agg_name = col.alias or f'{col.aggregate.function}({col.aggregate.column})'
                 result_row[agg_name] = agg_value
-        
+
         return [result_row] if result_row else []
-    
+
     def _compute_aggregate(self, func: str, column: str, rows: list[Row]) -> Any:
         """Compute an aggregate function value."""
         if func == 'COUNT':
             if column == '*':
                 return len(rows)
             return sum(1 for row in rows if row.get(column) is not None)
-        
+
         values = [row.get(column) for row in rows if row.get(column) is not None]
-        
+
         if not values:
             return None
-        
+
         if func == 'SUM':
             return sum(values)
         elif func == 'AVG':
@@ -327,16 +321,18 @@ class QueryExecutor:
             return min(values)
         elif func == 'MAX':
             return max(values)
-        
+
         return None
-    
-    def _project_columns(self, rows: list[tuple[int, Row]], columns: list[SelectColumn], table_name: str = None) -> list[Row]:
+
+    def _project_columns(
+        self, rows: list[tuple[int, Row]], columns: list[SelectColumn], table_name: str | None = None
+    ) -> list[Row]:
         """Project selected columns from rows."""
         results = []
-        
-        for row_id, row in rows:
+
+        for _row_id, row in rows:
             result = {}
-            
+
             for col in columns:
                 if col.name == '*':
                     # Select all columns
@@ -351,100 +347,101 @@ class QueryExecutor:
                     # Get column value
                     col_name = col.name
                     if col.table_alias:
-                        prefixed = f"{col.table_alias}.{col_name}"
+                        prefixed = f'{col.table_alias}.{col_name}'
                         if prefixed in row:
                             result[col_name] = row[prefixed]
                             continue
-                    
+
                     if col_name in row:
                         result[col_name] = row[col_name]
-            
+
             results.append(result)
-        
+
         return results
-    
+
     def _execute_order_by(self, rows: list[Row], order_by: list[OrderByItem]) -> list[Row]:
         """Sort rows by ORDER BY columns."""
+
         def sort_key(row):
             keys = []
             for item in order_by:
                 col_name = item.column
                 if item.table_alias:
-                    col_name = f"{item.table_alias}.{item.column}"
-                
+                    col_name = f'{item.table_alias}.{item.column}'
+
                 val = row.get(col_name, row.get(item.column))
-                
+
                 # Handle None values
                 if val is None:
                     val = (1, None)  # Sort NULLs last
                 else:
                     val = (0, val)
-                
+
                 keys.append(val)
             return keys
-        
+
         # Sort with direction handling
         sorted_rows = sorted(rows, key=sort_key)
-        
+
         # Reverse if DESC
         if order_by and order_by[0].direction == 'DESC':
             sorted_rows = sorted(rows, key=sort_key, reverse=True)
-        
+
         return sorted_rows
-    
+
     def execute_insert(self, query: InsertQuery) -> int:
         """Execute an INSERT query."""
         if query.table not in self.tables:
             raise TableNotFoundError(query.table)
-        
+
         table = self.tables[query.table]
-        
+
         # Build row from columns and values
-        row = dict(zip(query.columns, query.values))
-        
+        row = dict(zip(query.columns, query.values, strict=False))
+
         row_id = table.insert(row)
         return row_id
-    
+
     def execute_update(self, query: UpdateQuery) -> int:
         """Execute an UPDATE query."""
         if query.table not in self.tables:
             raise TableNotFoundError(query.table)
-        
+
         table = self.tables[query.table]
-        
+
         # Find matching rows
         row_ids = set()
         for row_id, row in table.scan():
             if query.where and not self._evaluate_where(row, query.where):
                 continue
             row_ids.add(row_id)
-        
+
         # Update rows
         return table.update_rows(row_ids, query.set_clause)
-    
+
     def execute_delete(self, query: DeleteQuery) -> int:
         """Execute a DELETE query."""
         if query.table not in self.tables:
             raise TableNotFoundError(query.table)
-        
+
         table = self.tables[query.table]
-        
+
         # Find matching rows
         row_ids = set()
         for row_id, row in table.scan():
             if query.where and not self._evaluate_where(row, query.where):
                 continue
             row_ids.add(row_id)
-        
+
         # Delete rows
         return table.delete_rows(row_ids)
-    
+
     def execute_create_table(self, query: CreateTableQuery) -> None:
         """Execute a CREATE TABLE query."""
         # This is handled by the Database class
-        raise InvalidQueryError("CREATE TABLE should be handled by Database")
-    
+        raise InvalidQueryError('CREATE TABLE should be handled by Database')
+
     def execute_drop_table(self, query: DropTableQuery) -> None:
         """Execute a DROP TABLE query."""
         # This is handled by the Database class
-        raise InvalidQueryError("DROP TABLE should be handled by Database")
+        raise InvalidQueryError('DROP TABLE should be handled by Database')

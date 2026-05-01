@@ -1,16 +1,17 @@
 """Type definitions for MiniDB."""
 
 from enum import Enum, auto
-from typing import Any, Union
+from typing import Any
 
 
 class ColumnType(Enum):
     """Supported column types in MiniDB."""
+
     INTEGER = auto()
     STRING = auto()
     FLOAT = auto()
     BOOLEAN = auto()
-    
+
     @classmethod
     def from_string(cls, type_str: str) -> 'ColumnType':
         """Convert a string representation to ColumnType."""
@@ -29,18 +30,18 @@ class ColumnType(Enum):
         }
         upper_str = type_str.upper()
         if upper_str not in type_map:
-            raise ValueError(f"Unknown column type: {type_str}")
+            raise ValueError(f'Unknown column type: {type_str}')
         return type_map[upper_str]
-    
+
     def to_string(self) -> str:
         """Convert ColumnType to string representation."""
         return self.name
-    
+
     def validate(self, value: Any) -> bool:
         """Check if a value is valid for this column type."""
         if value is None:
             return True  # NULL values handled by nullable constraint
-        
+
         type_validators = {
             ColumnType.INTEGER: lambda v: isinstance(v, int) and not isinstance(v, bool),
             ColumnType.STRING: lambda v: isinstance(v, str),
@@ -48,12 +49,12 @@ class ColumnType(Enum):
             ColumnType.BOOLEAN: lambda v: isinstance(v, bool),
         }
         return type_validators[self](value)
-    
+
     def cast(self, value: Any) -> Any:
         """Attempt to cast a value to this type."""
         if value is None:
             return None
-        
+
         try:
             if self == ColumnType.INTEGER:
                 if isinstance(value, bool):
@@ -69,14 +70,15 @@ class ColumnType(Enum):
                 if isinstance(value, str):
                     return value.lower() in ('true', '1', 'yes')
                 return bool(value)
-        except (ValueError, TypeError):
-            raise TypeError(f"Cannot cast {value!r} to {self.name}")
-        
+        except (ValueError, TypeError) as e:
+            raise TypeError(f'Cannot cast {value!r} to {self.name}') from e
+
         return value
 
 
 class TokenType(Enum):
     """Token types for the SQL lexer."""
+
     # Keywords
     SELECT = auto()
     FROM = auto()
@@ -110,14 +112,14 @@ class TokenType(Enum):
     NULL = auto()
     NOT_NULL = auto()
     LIMIT = auto()
-    
+
     # Literals
     IDENTIFIER = auto()
     STRING_LITERAL = auto()
     INTEGER_LITERAL = auto()
     FLOAT_LITERAL = auto()
     BOOLEAN_LITERAL = auto()
-    
+
     # Operators
     EQUALS = auto()
     NOT_EQUALS = auto()
@@ -125,7 +127,7 @@ class TokenType(Enum):
     GREATER_EQUAL = auto()
     LESS = auto()
     LESS_EQUAL = auto()
-    
+
     # Punctuation
     COMMA = auto()
     DOT = auto()
@@ -133,13 +135,14 @@ class TokenType(Enum):
     RPAREN = auto()
     SEMICOLON = auto()
     STAR = auto()
-    
+
     # Special
     EOF = auto()
 
 
 class QueryType(Enum):
     """Types of SQL queries."""
+
     SELECT = auto()
     INSERT = auto()
     UPDATE = auto()
@@ -152,4 +155,4 @@ class QueryType(Enum):
 Row = dict[str, Any]
 
 # Type alias for query result
-QueryResult = Union[list[Row], int, None]
+QueryResult = list[Row] | int | None
