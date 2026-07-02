@@ -3,10 +3,14 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
   ci:
@@ -17,12 +21,18 @@ jobs:
     name: Semantic Release
     needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: github.repository_owner == 'sebtardif'
-    concurrency:
-      group: release
-      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
 
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
