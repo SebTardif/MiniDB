@@ -99,3 +99,52 @@ class TestDatabaseLifecycle:
 
         with pytest.raises(TableNotFoundError):
             db.drop_table('nonexistent')
+
+    def test_drop_table_sql(self):
+        """Test dropping a table using SQL."""
+        db = MiniDB()
+        db.execute('CREATE TABLE temp (id INTEGER PRIMARY KEY, value STRING)')
+        assert 'temp' in db
+        db.execute('DROP TABLE temp')
+        assert 'temp' not in db
+
+    def test_query_on_non_select(self):
+        """Test that query() raises MiniDBError for non-SELECT statements."""
+        from minidb.errors import MiniDBError
+
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
+        with pytest.raises(MiniDBError, match='Query did not return rows'):
+            db.query("INSERT INTO t (id, v) VALUES (1, 'x')")
+
+    def test_repr(self):
+        """Test __repr__ on MiniDB."""
+        db = MiniDB()
+        assert repr(db) == 'MiniDB()'
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY)')
+        db.execute('INSERT INTO users (id) VALUES (1)')
+        assert 'users(1 rows)' in repr(db)
+
+    def test_insert_into_nonexistent_table(self):
+        """Test INSERT into a table that does not exist raises error."""
+        db = MiniDB()
+        with pytest.raises(TableNotFoundError):
+            db.execute('INSERT INTO ghost (id) VALUES (1)')
+
+    def test_update_nonexistent_table(self):
+        """Test UPDATE on a table that does not exist raises error."""
+        db = MiniDB()
+        with pytest.raises(TableNotFoundError):
+            db.execute('UPDATE ghost SET id = 1')
+
+    def test_delete_from_nonexistent_table(self):
+        """Test DELETE from a table that does not exist raises error."""
+        db = MiniDB()
+        with pytest.raises(TableNotFoundError):
+            db.execute('DELETE FROM ghost')
+
+    def test_select_from_nonexistent_table(self):
+        """Test SELECT from a table that does not exist raises error."""
+        db = MiniDB()
+        with pytest.raises(TableNotFoundError):
+            db.query('SELECT * FROM ghost')
