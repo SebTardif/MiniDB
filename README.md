@@ -246,7 +246,9 @@ MIT License - Use freely for any purpose.
 
 ## Contributing
 
-Contributions welcome! Areas for improvement:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
+Areas for improvement:
 
 - B-tree indexes for range queries
 - LEFT/RIGHT OUTER JOIN
