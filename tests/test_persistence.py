@@ -1,12 +1,9 @@
 """Tests for persistence functionality."""
 
 import os
-import sys
 import tempfile
 
 import pytest
-
-sys.path.insert(0, '/home/sebtardif/MiniDB')
 
 from minidb import Column, ColumnType, MiniDB
 
@@ -169,6 +166,46 @@ class TestPersistence:
 
         with pytest.raises(FileReadError):
             MiniDB.load('/nonexistent/path/to/file.json')
+
+    def test_persistence_version_mismatch(self):
+        """Test loading a file with incompatible version raises error."""
+        import json
+
+        from minidb.errors import VersionMismatchError
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            filepath = f.name
+            json.dump({'version': '99.0', 'tables': {}}, f)
+
+        try:
+            with pytest.raises(VersionMismatchError) as exc_info:
+                MiniDB.load(filepath)
+            assert '99.0' in str(exc_info.value)
+        finally:
+            os.unlink(filepath)
+
+    def test_persistence_invalid_json(self):
+        """Test loading a file with invalid JSON raises error."""
+        from minidb.errors import FileReadError
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            filepath = f.name
+            f.write('not valid json {{{')
+
+        try:
+            with pytest.raises(FileReadError) as exc_info:
+                MiniDB.load(filepath)
+            assert 'Invalid JSON' in str(exc_info.value)
+        finally:
+            os.unlink(filepath)
+
+    def test_persistence_write_to_readonly_path(self):
+        """Test saving to an unwritable path raises error."""
+        from minidb.errors import FileWriteError
+
+        db = MiniDB()
+        with pytest.raises(FileWriteError):
+            db.save('/nonexistent/directory/file.json')
 
     def test_json_format_readable(self):
         """Test that saved JSON is human-readable."""

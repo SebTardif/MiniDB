@@ -1,10 +1,6 @@
 """Tests for INSERT, SELECT, UPDATE, DELETE operations."""
 
-import sys
-
 import pytest
-
-sys.path.insert(0, '/home/sebtardif/MiniDB')
 
 from minidb import Column, ColumnType, DuplicateKeyError, MiniDB
 

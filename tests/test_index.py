@@ -1,9 +1,5 @@
 """Tests for indexing and query planning."""
 
-import sys
-
-sys.path.insert(0, '/home/sebtardif/MiniDB')
-
 from minidb import Column, ColumnType, HashIndex, MiniDB
 from minidb.planner import QueryPlanner, ScanType
 

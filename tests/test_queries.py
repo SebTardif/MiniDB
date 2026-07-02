@@ -1,12 +1,71 @@
 """Tests for WHERE, ORDER BY, GROUP BY queries."""
 
-import sys
-
 import pytest
 
-sys.path.insert(0, '/home/sebtardif/MiniDB')
-
 from minidb import Column, ColumnType, MiniDB
+from minidb.errors import SyntaxError_
+
+
+class TestParserErrors:
+    """Tests for SQL parsing error paths."""
+
+    def test_syntax_error_unexpected_token(self):
+        """Test that malformed SQL raises SyntaxError_."""
+        db = MiniDB()
+        with pytest.raises(SyntaxError_):
+            db.execute('SELECTX * FROM users')
+
+    def test_syntax_error_unterminated_string(self):
+        """Test that an unterminated string literal raises SyntaxError_."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
+        with pytest.raises(SyntaxError_, match='Unterminated string'):
+            db.execute("INSERT INTO t (id, v) VALUES (1, 'hello)")
+
+    def test_syntax_error_unexpected_character(self):
+        """Test that unexpected characters raise SyntaxError_."""
+        db = MiniDB()
+        with pytest.raises(SyntaxError_):
+            db.execute('SELECT * FROM t WHERE id @ 1')
+
+    def test_empty_sql(self):
+        """Test that empty SQL raises SyntaxError_."""
+        db = MiniDB()
+        with pytest.raises(SyntaxError_):
+            db.execute('')
+
+
+class TestTypeValidation:
+    """Tests for type validation and NULL constraint errors."""
+
+    def test_null_value_on_primary_key(self):
+        """Test inserting NULL into a non-nullable primary key column."""
+        from minidb.errors import NullValueError
+
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
+        with pytest.raises(NullValueError):
+            db.execute("INSERT INTO t (id, v) VALUES (NULL, 'hello')")
+
+    def test_insert_with_missing_nullable_column(self):
+        """Test that missing nullable columns default to NULL."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
+        db.execute('INSERT INTO t (id) VALUES (1)')
+        results = db.query('SELECT * FROM t WHERE id = 1')
+        assert len(results) == 1
+        assert results[0]['v'] is None
+
+    def test_duplicate_primary_key_error_message(self):
+        """Test that DuplicateKeyError includes the key value."""
+        from minidb.errors import DuplicateKeyError
+
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)')
+        db.execute('INSERT INTO t (id) VALUES (42)')
+        with pytest.raises(DuplicateKeyError) as exc_info:
+            db.execute('INSERT INTO t (id) VALUES (42)')
+        assert '42' in str(exc_info.value)
 
 
 class TestWhereClause:

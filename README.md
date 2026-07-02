@@ -12,7 +12,7 @@ A miniature in-memory database with SQL-like query support, built from scratch u
   - GROUP BY with aggregations
   - LIMIT clause
 - **Aggregations**: COUNT, SUM, AVG, MIN, MAX
-- **JOINs**: INNER JOIN between tables
+- **JOINs**: INNER JOIN and LEFT JOIN between tables
 - **Indexing**: Automatic hash-based indexing on primary keys
 - **Query Planner**: Chooses between index scans and table scans
 - **Persistence**: Save/load database to JSON files with versioning
@@ -23,7 +23,7 @@ No installation required! MiniDB uses only Python standard library.
 
 ```bash
 # Just clone and use
-git clone <repo-url>
+git clone https://github.com/SebTardif/MiniDB.git
 cd MiniDB
 python -m pytest tests/ -v  # Run tests
 python main.py              # Run demo
@@ -161,6 +161,11 @@ LIMIT 10
 SELECT t1.col, t2.col
 FROM t1
 JOIN t2 ON t1.id = t2.t1_id
+
+-- LEFT JOIN (includes unmatched left rows with NULLs)
+SELECT t1.col, t2.col
+FROM t1
+LEFT JOIN t2 ON t1.id = t2.t1_id
 ```
 
 ### UPDATE
@@ -194,7 +199,7 @@ minidb/
 
 ## Test Suite
 
-MiniDB includes a comprehensive test suite with 29+ test cases:
+MiniDB includes a comprehensive test suite with 95+ test cases:
 
 ```bash
 # Run all tests
@@ -211,7 +216,7 @@ python -m pytest tests/ -v --cov=minidb
 
 - **test_database.py**: Database lifecycle and table management
 - **test_crud.py**: INSERT, SELECT, UPDATE, DELETE operations
-- **test_queries.py**: WHERE, ORDER BY, LIMIT
+- **test_queries.py**: WHERE, ORDER BY, LIMIT, parser errors, type validation
 - **test_aggregations.py**: COUNT, SUM, AVG, MIN, MAX, GROUP BY
 - **test_joins.py**: JOIN operations
 - **test_index.py**: Indexing and query planning
@@ -233,8 +238,7 @@ MiniDB is designed for small to medium datasets:
 - Single-threaded
 - No transactions
 - No foreign key constraints
-- No NULL handling in some edge cases
-- Limited JOIN support (INNER JOIN only)
+- Limited JOIN support (INNER and LEFT JOIN only, no RIGHT JOIN execution)
 
 ## License
 
@@ -242,7 +246,9 @@ MIT License - Use freely for any purpose.
 
 ## Contributing
 
-Contributions welcome! Areas for improvement:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
+Areas for improvement:
 
 - B-tree indexes for range queries
 - LEFT/RIGHT OUTER JOIN
