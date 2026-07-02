@@ -385,13 +385,8 @@ class QueryExecutor:
             return keys
 
         # Sort with direction handling
-        sorted_rows = sorted(rows, key=sort_key)
-
-        # Reverse if DESC
-        if order_by and order_by[0].direction == 'DESC':
-            sorted_rows = sorted(rows, key=sort_key, reverse=True)
-
-        return sorted_rows
+        reverse = bool(order_by and order_by[0].direction == 'DESC')
+        return sorted(rows, key=sort_key, reverse=reverse)
 
     def execute_insert(self, query: InsertQuery) -> int:
         """Execute an INSERT query."""
