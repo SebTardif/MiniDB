@@ -3,7 +3,6 @@
 from .column import Column, Schema
 from .errors import MiniDBError, TableExistsError, TableNotFoundError
 from .parser import CreateTableQuery, DropTableQuery, parse_sql
-from .persistence import load_database, save_database
 from .query import QueryExecutor
 from .table import Table
 from .types import QueryResult, Row
@@ -156,6 +155,8 @@ class MiniDB:
         Args:
             filepath: Path to the output file
         """
+        from .persistence import save_database
+
         save_database(self, filepath)
 
     @classmethod
@@ -169,6 +170,8 @@ class MiniDB:
         Returns:
             Loaded database instance
         """
+        from .persistence import load_database
+
         return load_database(filepath)
 
     def __repr__(self) -> str:
