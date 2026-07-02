@@ -1,5 +1,6 @@
 """Query execution engine for MiniDB."""
 
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -241,7 +242,6 @@ class QueryExecutor:
 
     def _match_like(self, value: str, pattern: str) -> bool:
         """Match a value against a LIKE pattern."""
-        import re
 
         # Convert SQL LIKE pattern to regex
         # % matches any sequence, _ matches single character

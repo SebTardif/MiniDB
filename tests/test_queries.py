@@ -1,10 +1,6 @@
 """Tests for WHERE, ORDER BY, GROUP BY queries."""
 
-import sys
-
 import pytest
-
-sys.path.insert(0, '/home/sebtardif/MiniDB')
 
 from minidb import Column, ColumnType, MiniDB
 from minidb.errors import SyntaxError_

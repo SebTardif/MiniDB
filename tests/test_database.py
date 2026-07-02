@@ -1,10 +1,6 @@
 """Tests for database lifecycle and table management."""
 
-import sys
-
 import pytest
-
-sys.path.insert(0, '/home/sebtardif/MiniDB')
 
 from minidb import Column, ColumnType, MiniDB, TableExistsError, TableNotFoundError
 

@@ -12,10 +12,6 @@ Demonstrates all features of MiniDB including:
 - Persistence
 """
 
-import sys
-
-sys.path.insert(0, '/home/sebtardif/MiniDB')
-
 from minidb import MiniDB
 
 

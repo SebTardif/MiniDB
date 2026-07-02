@@ -1,12 +1,9 @@
 """Tests for persistence functionality."""
 
 import os
-import sys
 import tempfile
 
 import pytest
-
-sys.path.insert(0, '/home/sebtardif/MiniDB')
 
 from minidb import Column, ColumnType, MiniDB
 
