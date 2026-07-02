@@ -1,22 +1,20 @@
 """Persistence layer for MiniDB."""
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .errors import FileReadError, FileWriteError, VersionMismatchError
-
-if TYPE_CHECKING:
-    from .database import MiniDB
+from .table import Table
 
 CURRENT_VERSION = '1.0'
 
 
-def save_database(db: 'MiniDB', filepath: str) -> None:
+def _serialize(tables: dict[str, Table], filepath: str) -> None:
     """
-    Save a database to a JSON file.
+    Serialize tables to a JSON file.
 
     Args:
-        db: The database to save
+        tables: Mapping of table names to Table objects
         filepath: Path to the output file
 
     Raises:
@@ -24,7 +22,7 @@ def save_database(db: 'MiniDB', filepath: str) -> None:
     """
     data: dict[str, Any] = {'version': CURRENT_VERSION, 'tables': {}}
 
-    for table_name, table in db._tables.items():
+    for table_name, table in tables.items():
         data['tables'][table_name] = table.to_dict()
 
     try:
@@ -36,15 +34,15 @@ def save_database(db: 'MiniDB', filepath: str) -> None:
         raise FileWriteError(filepath, f'Serialization error: {e}') from e
 
 
-def load_database(filepath: str) -> 'MiniDB':
+def _deserialize(filepath: str) -> dict[str, Table]:
     """
-    Load a database from a JSON file.
+    Deserialize tables from a JSON file.
 
     Args:
         filepath: Path to the input file
 
     Returns:
-        The loaded database
+        Mapping of table names to Table objects
 
     Raises:
         FileReadError: If the file cannot be read
@@ -65,33 +63,8 @@ def load_database(filepath: str) -> 'MiniDB':
     if version != CURRENT_VERSION:
         raise VersionMismatchError(version, CURRENT_VERSION)
 
-    # Import here to avoid circular import
-    from .database import MiniDB
-    from .table import Table
-
-    db = MiniDB()
-
-    # Load tables
+    tables: dict[str, Table] = {}
     for table_name, table_data in data.get('tables', {}).items():
-        table = Table.from_dict(table_data)
-        db._tables[table_name] = table
+        tables[table_name] = Table.from_dict(table_data)
 
-    return db
-
-
-def export_to_json(db: 'MiniDB', filepath: str) -> None:
-    """
-    Export database to a human-readable JSON format.
-
-    This is an alias for save_database.
-    """
-    save_database(db, filepath)
-
-
-def import_from_json(filepath: str) -> 'MiniDB':
-    """
-    Import database from a human-readable JSON format.
-
-    This is an alias for load_database.
-    """
-    return load_database(filepath)
+    return tables

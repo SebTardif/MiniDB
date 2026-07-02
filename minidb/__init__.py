@@ -90,7 +90,8 @@ from .parser import (
     UpdateQuery,
     parse_sql,
 )
-from .persistence import load_database, save_database
+from .persistence import _deserialize as load_database
+from .persistence import _serialize as save_database
 from .planner import QueryPlan, QueryPlanner, ScanType
 from .query import QueryExecutor
 from .table import Table

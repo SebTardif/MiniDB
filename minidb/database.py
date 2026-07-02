@@ -3,6 +3,7 @@
 from .column import Column, Schema
 from .errors import MiniDBError, TableExistsError, TableNotFoundError
 from .parser import CreateTableQuery, DropTableQuery, parse_sql
+from .persistence import _deserialize, _serialize
 from .query import QueryExecutor
 from .table import Table
 from .types import QueryResult, Row
@@ -155,9 +156,7 @@ class MiniDB:
         Args:
             filepath: Path to the output file
         """
-        from .persistence import save_database
-
-        save_database(self, filepath)
+        _serialize(self._tables, filepath)
 
     @classmethod
     def load(cls, filepath: str) -> 'MiniDB':
@@ -170,9 +169,10 @@ class MiniDB:
         Returns:
             Loaded database instance
         """
-        from .persistence import load_database
-
-        return load_database(filepath)
+        tables = _deserialize(filepath)
+        db = cls()
+        db._tables = tables
+        return db
 
     def __repr__(self) -> str:
         """String representation of the database."""
