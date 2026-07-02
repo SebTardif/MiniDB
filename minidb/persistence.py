@@ -1,7 +1,7 @@
 """Persistence layer for MiniDB."""
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .errors import FileReadError, FileWriteError, VersionMismatchError
 
@@ -22,7 +22,7 @@ def save_database(db: 'MiniDB', filepath: str) -> None:
     Raises:
         FileWriteError: If the file cannot be written
     """
-    data = {'version': CURRENT_VERSION, 'tables': {}}
+    data: dict[str, Any] = {'version': CURRENT_VERSION, 'tables': {}}
 
     for table_name, table in db._tables.items():
         data['tables'][table_name] = table.to_dict()

@@ -173,7 +173,7 @@ class MiniDB:
 
     def __repr__(self) -> str:
         """String representation of the database."""
-        table_info = ', '.join(f'{name}({len(table.rows)} rows)' for name, table in self._tables.items())
+        table_info = ', '.join(f'{name}({table.row_count} rows)' for name, table in self._tables.items())
         return f'MiniDB({table_info})'
 
     def __len__(self) -> int:

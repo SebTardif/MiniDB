@@ -38,9 +38,11 @@ class QueryExecutor:
         elif isinstance(query, DeleteQuery):
             return self.execute_delete(query)
         elif isinstance(query, CreateTableQuery):
-            return self.execute_create_table(query)
+            self.execute_create_table(query)
+            return None
         elif isinstance(query, DropTableQuery):
-            return self.execute_drop_table(query)
+            self.execute_drop_table(query)
+            return None
         else:
             raise InvalidQueryError(f'Unknown query type: {type(query)}')
 
@@ -52,31 +54,31 @@ class QueryExecutor:
 
         main_table = self.tables[query.table]
 
-        # Get rows based on query plan
+        # Get rows based on query plan (indexed rows with row IDs)
         if query.joins:
-            rows = self._execute_join(main_table, query)
+            indexed_rows = self._execute_join(main_table, query)
         else:
-            rows = self._execute_table_scan(main_table, query)
+            indexed_rows = self._execute_table_scan(main_table, query)
 
         # Apply GROUP BY
         if query.group_by:
-            rows = self._execute_group_by(rows, query)
+            result_rows = self._execute_group_by(indexed_rows, query)
         elif self._has_aggregates(query.columns):
             # Aggregate without GROUP BY - aggregate all rows
-            rows = self._execute_aggregation(rows, query.columns)
+            result_rows = self._execute_aggregation(indexed_rows, query.columns)
         else:
             # Project columns
-            rows = self._project_columns(rows, query.columns, query.table)
+            result_rows = self._project_columns(indexed_rows, query.columns, query.table)
 
         # Apply ORDER BY
         if query.order_by:
-            rows = self._execute_order_by(rows, query.order_by)
+            result_rows = self._execute_order_by(result_rows, query.order_by)
 
         # Apply LIMIT
         if query.limit is not None:
-            rows = rows[: query.limit]
+            result_rows = result_rows[: query.limit]
 
-        return rows
+        return result_rows
 
     def _execute_table_scan(self, table: Table, query: SelectQuery) -> list[tuple[int, Row]]:
         """Execute a table scan with optional WHERE filtering."""
@@ -85,7 +87,7 @@ class QueryExecutor:
 
         rows = []
 
-        if plan.scan_type == ScanType.INDEX_SCAN:
+        if plan.scan_type == ScanType.INDEX_SCAN and plan.index_column is not None and query.where is not None:
             # Use index for equality lookup
             index = table.get_index(plan.index_column)
             condition = self._find_index_condition(query.where, plan.index_column)
@@ -95,7 +97,7 @@ class QueryExecutor:
                     row = table.get_row_by_id(row_id)
                     if row:
                         rows.append((row_id, row))
-        elif plan.scan_type == ScanType.INDEX_RANGE_SCAN:
+        elif plan.scan_type == ScanType.INDEX_RANGE_SCAN and plan.index_column is not None and query.where is not None:
             # Use index for range scan
             index = table.get_index(plan.index_column)
             condition = self._find_index_condition(query.where, plan.index_column)
@@ -272,17 +274,19 @@ class QueryExecutor:
             result_row = {}
 
             # Add group by columns
-            for i, col in enumerate(query.group_by):
-                result_row[col] = key[i]
+            for i, group_col in enumerate(query.group_by):
+                result_row[group_col] = key[i]
 
             # Add aggregate columns
-            for col in query.columns:
-                if col.aggregate:
-                    agg_value = self._compute_aggregate(col.aggregate.function, col.aggregate.column, group_rows)
-                    agg_name = col.alias or f'{col.aggregate.function}({col.aggregate.column})'
+            for sel_col in query.columns:
+                if sel_col.aggregate:
+                    agg_value = self._compute_aggregate(
+                        sel_col.aggregate.function, sel_col.aggregate.column, group_rows
+                    )
+                    agg_name = sel_col.alias or f'{sel_col.aggregate.function}({sel_col.aggregate.column})'
                     result_row[agg_name] = agg_value
-                elif col.name not in result_row and col.name != '*':
-                    result_row[col.name] = group_rows[0].get(col.name)
+                elif sel_col.name not in result_row and sel_col.name != '*':
+                    result_row[sel_col.name] = group_rows[0].get(sel_col.name)
 
             results.append(result_row)
 
@@ -308,7 +312,7 @@ class QueryExecutor:
                 return len(rows)
             return sum(1 for row in rows if row.get(column) is not None)
 
-        values = [row.get(column) for row in rows if row.get(column) is not None]
+        values: list[Any] = [v for row in rows if (v := row.get(column)) is not None]
 
         if not values:
             return None

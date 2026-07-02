@@ -135,8 +135,8 @@ class Table:
 
                 # Apply updates
                 for col, val in updates.items():
-                    if self.schema.has_column(col):
-                        col_def = self.schema.get_column(col)
+                    col_def = self.schema.get_column(col)
+                    if col_def is not None:
                         new_row[col] = col_def.validate(val)
 
                 # Validate the new row
