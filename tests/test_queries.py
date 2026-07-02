@@ -222,6 +222,23 @@ class TestWhereClause:
         salaries = [r['salary'] for r in results]
         assert salaries == [55000.0, 52000.0, 50000.0, 48000.0, 45000.0]
 
+    def test_order_by_mixed_directions(self, db):
+        """Test ORDER BY with mixed ASC/DESC on different columns."""
+        # active has true/false, age varies within each group
+        results = db.query('SELECT * FROM users ORDER BY active DESC, age ASC')
+
+        # active=true first (DESC), then within each group sorted by age ASC
+        active_flags = [r['active'] for r in results]
+        assert active_flags == [True, True, True, False, False]
+
+        # Ages within active=true group should be ascending
+        active_ages = [r['age'] for r in results if r['active'] is True]
+        assert active_ages == sorted(active_ages)
+
+        # Ages within active=false group should be ascending
+        inactive_ages = [r['age'] for r in results if r['active'] is False]
+        assert inactive_ages == sorted(inactive_ages)
+
     def test_order_by_with_where(self, db):
         """Test ORDER BY combined with WHERE."""
         results = db.query('SELECT * FROM users WHERE active = true ORDER BY age DESC')
