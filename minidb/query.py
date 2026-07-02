@@ -1,5 +1,6 @@
 """Query execution engine for MiniDB."""
 
+import functools
 import re
 from collections import defaultdict
 from typing import Any
@@ -364,29 +365,42 @@ class QueryExecutor:
         return results
 
     def _execute_order_by(self, rows: list[Row], order_by: list[OrderByItem]) -> list[Row]:
-        """Sort rows by ORDER BY columns."""
+        """Sort rows by ORDER BY columns with per-column direction."""
 
-        def sort_key(row):
-            keys = []
+        def _compare_rows(a: Row, b: Row) -> int:
             for item in order_by:
                 col_name = item.column
                 if item.table_alias:
                     col_name = f'{item.table_alias}.{item.column}'
 
-                val = row.get(col_name, row.get(item.column))
+                val_a = a.get(col_name, a.get(item.column))
+                val_b = b.get(col_name, b.get(item.column))
 
-                # Handle None values
-                if val is None:
-                    val = (1, None)  # Sort NULLs last
+                # NULLs sort last regardless of direction
+                if val_a is None and val_b is None:
+                    continue
+                if val_a is None:
+                    return 1
+                if val_b is None:
+                    return -1
+
+                # Compare values
+                if val_a < val_b:
+                    cmp = -1
+                elif val_a > val_b:
+                    cmp = 1
                 else:
-                    val = (0, val)
+                    continue
 
-                keys.append(val)
-            return keys
+                # Reverse for DESC
+                if item.direction == 'DESC':
+                    cmp = -cmp
 
-        # Sort with direction handling
-        reverse = bool(order_by and order_by[0].direction == 'DESC')
-        return sorted(rows, key=sort_key, reverse=reverse)
+                return cmp
+
+            return 0
+
+        return sorted(rows, key=functools.cmp_to_key(_compare_rows))
 
     def execute_insert(self, query: InsertQuery) -> int:
         """Execute an INSERT query."""
