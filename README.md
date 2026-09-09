@@ -43,7 +43,7 @@ from minidb import MiniDB, Column, ColumnType
 db = MiniDB()
 
 # Create table using SQL
-db.execute('''
+db.execute("""
     CREATE TABLE users (
         id INTEGER PRIMARY KEY,
         name STRING NOT NULL,
@@ -51,56 +51,59 @@ db.execute('''
         salary FLOAT,
         active BOOLEAN
     )
-''')
+""")
 
 # Or create table programmatically
-db.create_table('orders', [
-    Column('id', ColumnType.INTEGER, primary_key=True),
-    Column('user_id', ColumnType.INTEGER),
-    Column('product', ColumnType.STRING),
-    Column('total', ColumnType.FLOAT),
-])
+db.create_table(
+    'orders',
+    [
+        Column('id', ColumnType.INTEGER, primary_key=True),
+        Column('user_id', ColumnType.INTEGER),
+        Column('product', ColumnType.STRING),
+        Column('total', ColumnType.FLOAT),
+    ],
+)
 
 # Insert data
 db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 75000.0, true)")
 db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (2, 'Bob', 25, 55000.0, false)")
 
 # Query data
-results = db.query("SELECT * FROM users WHERE age > 28")
+results = db.query('SELECT * FROM users WHERE age > 28')
 
 # Complex queries
-results = db.query('''
+results = db.query("""
     SELECT name, salary FROM users
     WHERE active = true AND salary > 60000
     ORDER BY salary DESC
-''')
+""")
 
 # Inspect the SELECT plan (index_scan vs table_scan)
 print(db.explain('SELECT * FROM users WHERE id = 1'))
 
 # Aggregations
-results = db.query("SELECT COUNT(*), AVG(salary) FROM users")
+results = db.query('SELECT COUNT(*), AVG(salary) FROM users')
 
 # GROUP BY
-results = db.query('''
+results = db.query("""
     SELECT active, COUNT(*), AVG(salary)
     FROM users
     GROUP BY active
-''')
+""")
 
 # JOINs
-results = db.query('''
+results = db.query("""
     SELECT users.name, orders.product, orders.total
     FROM users
     JOIN orders ON users.id = orders.user_id
     WHERE orders.total > 50
-''')
+""")
 
 # UPDATE
-affected = db.execute("UPDATE users SET salary = 80000.0 WHERE id = 1")
+affected = db.execute('UPDATE users SET salary = 80000.0 WHERE id = 1')
 
 # DELETE
-affected = db.execute("DELETE FROM users WHERE active = false")
+affected = db.execute('DELETE FROM users WHERE active = false')
 
 # DROP TABLE (SQL or Python API)
 db.execute('CREATE TABLE scratch (id INTEGER PRIMARY KEY)')
