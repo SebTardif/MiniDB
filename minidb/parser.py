@@ -24,6 +24,7 @@ class Condition:
     operator: str  # '=', '!=', '>', '>=', '<', '<=', 'LIKE', 'IN'
     value: Any
     table_alias: str | None = None  # For JOIN column references
+    negated: bool = False
 
 
 @dataclass
@@ -600,9 +601,10 @@ class Parser:
 
     def _parse_condition(self) -> Condition:
         """Parse a single condition."""
-        # Check for NOT
+        negated = False
         if self._match(TokenType.NOT):
             self._advance()
+            negated = True
 
         # Parse column (possibly with table prefix)
         table_alias = None
@@ -657,7 +659,7 @@ class Parser:
         else:
             value = self._parse_value()
 
-        return Condition(column=column, operator=op, value=value, table_alias=table_alias)
+        return Condition(column=column, operator=op, value=value, table_alias=table_alias, negated=negated)
 
     def _parse_value(self) -> Any:
         """Parse a literal value."""

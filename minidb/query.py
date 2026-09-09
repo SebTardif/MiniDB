@@ -227,23 +227,27 @@ class QueryExecutor:
             return False
 
         if op == '=':
-            return value == cond_value
+            result = value == cond_value
         elif op == '!=':
-            return value != cond_value
+            result = value != cond_value
         elif op == '>':
-            return value > cond_value
+            result = value > cond_value
         elif op == '>=':
-            return value >= cond_value
+            result = value >= cond_value
         elif op == '<':
-            return value < cond_value
+            result = value < cond_value
         elif op == '<=':
-            return value <= cond_value
+            result = value <= cond_value
         elif op == 'LIKE':
-            return self._match_like(str(value), str(cond_value))
+            result = self._match_like(str(value), str(cond_value))
         elif op == 'IN':
-            return value in cond_value
+            result = value in cond_value
+        else:
+            return False
 
-        return False
+        if condition.negated:
+            return not result
+        return result
 
     def _match_like(self, value: str, pattern: str) -> bool:
         """Match a value against a LIKE pattern."""

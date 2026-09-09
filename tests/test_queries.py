@@ -322,6 +322,20 @@ class TestWhereClause:
         assert 'Bob' in names
         assert 'Eve' in names
 
+    def test_where_not_boolean(self, db):
+        """NOT inverts a boolean equality."""
+        results = db.query('SELECT * FROM users WHERE NOT active = true')
+
+        names = {r['name'] for r in results}
+        assert names == {'Bob', 'Eve'}
+
+    def test_where_not_comparison(self, db):
+        """NOT age > 30 matches ages that are not greater than 30."""
+        results = db.query('SELECT * FROM users WHERE NOT age > 30')
+
+        names = {r['name'] for r in results}
+        assert names == {'Alice', 'Bob', 'Diana'}
+
     def test_order_by_asc(self, db):
         """Test ORDER BY ascending."""
         results = db.query('SELECT * FROM users ORDER BY age ASC')
