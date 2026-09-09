@@ -5,13 +5,14 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from .errors import InvalidQueryError, TableNotFoundError
+from .errors import ColumnNotFoundError, InvalidQueryError, TableNotFoundError
 from .parser import (
     Condition,
     CreateTableQuery,
     DeleteQuery,
     DropTableQuery,
     InsertQuery,
+    JoinClause,
     OrderByItem,
     SelectColumn,
     SelectQuery,
@@ -67,10 +68,13 @@ class QueryExecutor:
             result_rows = self._execute_group_by(indexed_rows, query)
         elif self._has_aggregates(query.columns):
             # Aggregate without GROUP BY - aggregate all rows
-            result_rows = self._execute_aggregation(indexed_rows, query.columns)
+            result_rows = self._execute_aggregation(indexed_rows, query)
         else:
             # Project columns
             result_rows = self._project_columns(indexed_rows, query.columns, query.table)
+
+        if query.distinct:
+            result_rows = self._deduplicate_rows(result_rows)
 
         # Apply ORDER BY
         if query.order_by:
@@ -129,23 +133,32 @@ class QueryExecutor:
         left_rows = list(left_table.scan())
 
         for join in query.joins:
+            if join.join_type == 'RIGHT':
+                raise InvalidQueryError('RIGHT JOIN is not supported; swap the tables and use LEFT JOIN')
+
             if join.table not in self.tables:
                 raise TableNotFoundError(join.table)
 
             right_table = self.tables[join.table]
             right_rows = list(right_table.scan())
 
-            # Build index on right table for join column
+            from_column, join_column = self._join_on_columns(query.table, join)
+            if not left_table.schema.has_column(from_column):
+                raise ColumnNotFoundError(from_column, query.table)
+            if not right_table.schema.has_column(join_column):
+                raise ColumnNotFoundError(join_column, join.table)
+
+            # Build index on JOIN table for the JOIN-side column
             right_index = defaultdict(list)
             for rid, row in right_rows:
-                key = row.get(join.right_column)
+                key = row.get(join_column)
                 if key is not None:
                     right_index[key].append((rid, row))
 
             # Perform nested loop join
             new_rows = []
             for left_id, left_row in left_rows:
-                left_key = left_row.get(join.left_column)
+                left_key = left_row.get(from_column)
                 matches = right_index.get(left_key, [])
 
                 if matches:
@@ -162,10 +175,14 @@ class QueryExecutor:
                             merged[f'{join.table}.{col}'] = val
                         new_rows.append((left_id, merged))
                 elif join.join_type == 'LEFT':
-                    # Left join: include left row with NULLs for right columns
-                    merged = dict(left_row)
+                    merged = {}
+                    for col, val in left_row.items():
+                        merged[col] = val
+                        if query.table:
+                            merged[f'{query.table}.{col}'] = val
                     for col in right_table.columns:
-                        merged[col] = None
+                        if col not in merged:
+                            merged[col] = None
                         merged[f'{join.table}.{col}'] = None
                     new_rows.append((left_id, merged))
 
@@ -177,13 +194,45 @@ class QueryExecutor:
 
         return left_rows
 
+    def _join_on_columns(self, from_table: str, join: JoinClause) -> tuple[str, str]:
+        """Map ON operands to (FROM-side column, JOIN-side column)."""
+        known = {from_table, join.table}
+
+        def side_of(qualifier: str | None) -> str | None:
+            if qualifier is None:
+                return None
+            if qualifier not in known:
+                raise InvalidQueryError(f"unknown table qualifier '{qualifier}'")
+            return 'from' if qualifier == from_table else 'join'
+
+        left_side = side_of(join.left_table)
+        right_side = side_of(join.right_table)
+
+        if left_side is None and right_side is None:
+            return join.left_column, join.right_column
+
+        from_column: str | None = None
+        join_column: str | None = None
+        for side, column in ((left_side, join.left_column), (right_side, join.right_column)):
+            if side == 'from':
+                from_column = column
+            elif side == 'join':
+                join_column = column
+
+        if from_column is None:
+            from_column = join.right_column if join_column == join.left_column else join.left_column
+        if join_column is None:
+            join_column = join.right_column if from_column == join.left_column else join.left_column
+
+        return from_column, join_column
+
     def _find_index_condition(self, where: WhereClause, column: str) -> Condition | None:
         """Find the condition that uses the index column."""
         if not where:
             return None
 
         for cond in where.conditions:
-            if isinstance(cond, Condition) and cond.column == column:
+            if isinstance(cond, Condition) and cond.column == column and not cond.negated:
                 return cond
 
         return None
@@ -213,33 +262,40 @@ class QueryExecutor:
                 col_name = prefixed
 
         if col_name not in row:
-            return False
+            raise ColumnNotFoundError(condition.column, condition.table_alias)
 
         value = row[col_name]
         cond_value = condition.value
         op = condition.operator
 
-        if value is None:
+        if op == 'IS NULL':
+            result = value is None
+        elif op == 'IS NOT NULL':
+            result = value is not None
+        elif value is None:
+            return False
+        elif op == '=':
+            result = value == cond_value
+        elif op == '!=':
+            result = value != cond_value
+        elif op == '>':
+            result = value > cond_value
+        elif op == '>=':
+            result = value >= cond_value
+        elif op == '<':
+            result = value < cond_value
+        elif op == '<=':
+            result = value <= cond_value
+        elif op == 'LIKE':
+            result = self._match_like(str(value), str(cond_value))
+        elif op == 'IN':
+            result = value in cond_value
+        else:
             return False
 
-        if op == '=':
-            return value == cond_value
-        elif op == '!=':
-            return value != cond_value
-        elif op == '>':
-            return value > cond_value
-        elif op == '>=':
-            return value >= cond_value
-        elif op == '<':
-            return value < cond_value
-        elif op == '<=':
-            return value <= cond_value
-        elif op == 'LIKE':
-            return self._match_like(str(value), str(cond_value))
-        elif op == 'IN':
-            return value in cond_value
-
-        return False
+        if condition.negated:
+            return not result
+        return result
 
     def _match_like(self, value: str, pattern: str) -> bool:
         """Match a value against a LIKE pattern."""
@@ -258,12 +314,40 @@ class QueryExecutor:
 
         return bool(re.match(regex_pattern, value, re.IGNORECASE))
 
+    def _deduplicate_rows(self, rows: list[Row]) -> list[Row]:
+        """Drop duplicate projected rows, keeping first-seen order."""
+        seen: set[tuple] = set()
+        unique: list[Row] = []
+        for row in rows:
+            key = tuple(row.items())
+            if key not in seen:
+                seen.add(key)
+                unique.append(row)
+        return unique
+
     def _has_aggregates(self, columns: list[SelectColumn]) -> bool:
         """Check if any column has an aggregate function."""
         return any(col.aggregate for col in columns)
 
+    def _column_in_query_schema(self, column: str, query: SelectQuery) -> bool:
+        """Return True if column exists on the FROM table or any JOIN table."""
+        main = self.tables.get(query.table)
+        if main is not None and main.schema.has_column(column):
+            return True
+        for join in query.joins:
+            joined = self.tables.get(join.table)
+            if joined is not None and joined.schema.has_column(column):
+                return True
+        return False
+
     def _execute_group_by(self, rows: list[tuple[int, Row]], query: SelectQuery) -> list[Row]:
         """Execute GROUP BY aggregation."""
+        sample = rows[0][1] if rows else None
+        for col in query.group_by:
+            in_row = sample is not None and col in sample
+            if not in_row and not self._column_in_query_schema(col, query):
+                raise ColumnNotFoundError(col, query.table)
+
         groups = defaultdict(list)
 
         for _row_id, row in rows:
@@ -282,7 +366,7 @@ class QueryExecutor:
             for sel_col in query.columns:
                 if sel_col.aggregate:
                     agg_value = self._compute_aggregate(
-                        sel_col.aggregate.function, sel_col.aggregate.column, group_rows
+                        sel_col.aggregate.function, sel_col.aggregate.column, group_rows, query
                     )
                     agg_name = sel_col.alias or f'{sel_col.aggregate.function}({sel_col.aggregate.column})'
                     result_row[agg_name] = agg_value
@@ -293,21 +377,24 @@ class QueryExecutor:
 
         return results
 
-    def _execute_aggregation(self, rows: list[tuple[int, Row]], columns: list[SelectColumn]) -> list[Row]:
+    def _execute_aggregation(self, rows: list[tuple[int, Row]], query: SelectQuery) -> list[Row]:
         """Execute aggregation without GROUP BY."""
         row_list = [row for _, row in rows]
         result_row = {}
 
-        for col in columns:
+        for col in query.columns:
             if col.aggregate:
-                agg_value = self._compute_aggregate(col.aggregate.function, col.aggregate.column, row_list)
+                agg_value = self._compute_aggregate(col.aggregate.function, col.aggregate.column, row_list, query)
                 agg_name = col.alias or f'{col.aggregate.function}({col.aggregate.column})'
                 result_row[agg_name] = agg_value
 
         return [result_row] if result_row else []
 
-    def _compute_aggregate(self, func: str, column: str, rows: list[Row]) -> Any:
+    def _compute_aggregate(self, func: str, column: str, rows: list[Row], query: SelectQuery) -> Any:
         """Compute an aggregate function value."""
+        if column != '*' and not self._column_in_query_schema(column, query):
+            raise ColumnNotFoundError(column, query.table)
+
         if func == 'COUNT':
             if column == '*':
                 return len(rows)
@@ -349,16 +436,22 @@ class QueryExecutor:
                     # Aggregates handled separately
                     pass
                 else:
-                    # Get column value
                     col_name = col.name
+                    out_name = col.alias or col_name
                     if col.table_alias:
                         prefixed = f'{col.table_alias}.{col_name}'
                         if prefixed in row:
-                            result[col_name] = row[prefixed]
+                            result[out_name] = row[prefixed]
                             continue
+                        if col_name in row:
+                            result[out_name] = row[col_name]
+                            continue
+                        raise ColumnNotFoundError(col_name, col.table_alias)
 
                     if col_name in row:
-                        result[col_name] = row[col_name]
+                        result[out_name] = row[col_name]
+                    else:
+                        raise ColumnNotFoundError(col_name, table_name)
 
             results.append(result)
 
@@ -366,6 +459,15 @@ class QueryExecutor:
 
     def _execute_order_by(self, rows: list[Row], order_by: list[OrderByItem]) -> list[Row]:
         """Sort rows by ORDER BY columns with per-column direction."""
+        if rows:
+            sample = rows[0]
+            for item in order_by:
+                if item.table_alias:
+                    prefixed = f'{item.table_alias}.{item.column}'
+                    if prefixed not in sample and item.column not in sample:
+                        raise ColumnNotFoundError(item.column, item.table_alias)
+                elif item.column not in sample:
+                    raise ColumnNotFoundError(item.column)
 
         def _compare_rows(a: Row, b: Row) -> int:
             for item in order_by:
@@ -409,8 +511,16 @@ class QueryExecutor:
 
         table = self.tables[query.table]
 
-        # Build row from columns and values
-        row = dict(zip(query.columns, query.values, strict=False))
+        if len(query.columns) != len(query.values):
+            raise InvalidQueryError(
+                f'column count ({len(query.columns)}) does not match value count ({len(query.values)})'
+            )
+
+        for col in query.columns:
+            if not table.schema.has_column(col):
+                raise ColumnNotFoundError(col, query.table)
+
+        row = dict(zip(query.columns, query.values, strict=True))
 
         row_id = table.insert(row)
         return row_id
@@ -452,9 +562,9 @@ class QueryExecutor:
     def execute_create_table(self, query: CreateTableQuery) -> None:
         """Execute a CREATE TABLE query."""
         # This is handled by the Database class
-        raise InvalidQueryError('CREATE TABLE should be handled by Database')
+        raise InvalidQueryError('CREATE TABLE should be handled by MiniDB.execute()')
 
     def execute_drop_table(self, query: DropTableQuery) -> None:
         """Execute a DROP TABLE query."""
         # This is handled by the Database class
-        raise InvalidQueryError('DROP TABLE should be handled by Database')
+        raise InvalidQueryError('DROP TABLE should be handled by MiniDB.execute()')

@@ -111,7 +111,10 @@ class TokenType(Enum):
     KEY = auto()
     NULL = auto()
     NOT_NULL = auto()
+    IS = auto()
     LIMIT = auto()
+    AS = auto()
+    DISTINCT = auto()
 
     # Literals
     IDENTIFIER = auto()

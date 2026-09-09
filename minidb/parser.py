@@ -21,9 +21,10 @@ class Condition:
     """Represents a WHERE condition."""
 
     column: str
-    operator: str  # '=', '!=', '>', '>=', '<', '<=', 'LIKE', 'IN'
+    operator: str  # '=', '!=', '>', '>=', '<', '<=', 'LIKE', 'IN', 'IS NULL', 'IS NOT NULL'
     value: Any
     table_alias: str | None = None  # For JOIN column references
+    negated: bool = False
 
 
 @dataclass
@@ -85,6 +86,7 @@ class SelectQuery:
     group_by: list[str] = field(default_factory=list)
     limit: int | None = None
     joins: list[JoinClause] = field(default_factory=list)
+    distinct: bool = False
 
 
 @dataclass
@@ -172,7 +174,10 @@ class Lexer:
         'PRIMARY': TokenType.PRIMARY,
         'KEY': TokenType.KEY,
         'NULL': TokenType.NULL,
+        'IS': TokenType.IS,
         'LIMIT': TokenType.LIMIT,
+        'AS': TokenType.AS,
+        'DISTINCT': TokenType.DISTINCT,
     }
 
     def __init__(self, sql: str):
@@ -389,9 +394,22 @@ class Parser:
         """Check if current token matches any of the given types."""
         return self._current().type in token_types
 
+    def _expect_end(self) -> None:
+        """Consume an optional semicolon, then require end of input."""
+        if self._match(TokenType.SEMICOLON):
+            self._advance()
+        token = self._current()
+        if token.type != TokenType.EOF:
+            raise SyntaxError_(f'Unexpected token: {token.value}', token.position)
+
     def _parse_select(self) -> SelectQuery:
         """Parse a SELECT query."""
         self._expect(TokenType.SELECT)
+
+        distinct = False
+        if self._match(TokenType.DISTINCT):
+            self._advance()
+            distinct = True
 
         # Parse columns
         columns = self._parse_select_columns()
@@ -433,12 +451,17 @@ class Parser:
             limit_token = self._expect(TokenType.INTEGER_LITERAL)
             limit = limit_token.value
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return SelectQuery(
-            columns=columns, table=table, where=where, order_by=order_by, group_by=group_by, limit=limit, joins=joins
+            columns=columns,
+            table=table,
+            where=where,
+            order_by=order_by,
+            group_by=group_by,
+            limit=limit,
+            joins=joins,
+            distinct=distinct,
         )
 
     def _parse_select_columns(self) -> list[SelectColumn]:
@@ -480,12 +503,12 @@ class Parser:
             table_alias = col_name
             col_name = self._expect(TokenType.IDENTIFIER).value
 
-        # Check for alias (AS keyword)
         alias = None
-        if self._match(TokenType.IDENTIFIER) and self._current().value.upper() != 'FROM':
+        if self._match(TokenType.AS):
+            self._advance()
+            alias = self._expect(TokenType.IDENTIFIER).value
+        elif self._match(TokenType.IDENTIFIER):
             alias = self._advance().value
-        elif self._peek().type == TokenType.IDENTIFIER and self._peek().value.upper() == 'AS':
-            pass  # Skip AS keyword handling for now
 
         return SelectColumn(name=col_name, table_alias=table_alias, alias=alias)
 
@@ -508,15 +531,18 @@ class Parser:
 
         self._expect(TokenType.RPAREN)
 
-        # Check for alias
         alias = None
-        if self._match(TokenType.IDENTIFIER):
+        if self._match(TokenType.AS):
+            self._advance()
+            alias = self._expect(TokenType.IDENTIFIER).value
+        elif self._match(TokenType.IDENTIFIER):
             alias = self._advance().value
 
         return SelectColumn(
             name=col_name,
             table_alias=table_alias,
             aggregate=AggregateFunction(function=func_name, column=col_name, alias=alias),
+            alias=alias,
         )
 
     def _parse_join(self) -> JoinClause:
@@ -560,29 +586,50 @@ class Parser:
             right_column=right_col,
             join_type=join_type,
             left_table=left_table,
-            right_table=right_table_alias or right_table,
+            right_table=right_table_alias,
         )
 
     def _parse_where(self) -> WhereClause:
-        """Parse a WHERE clause."""
-        conditions = [self._parse_condition()]
-        operator = 'AND'
+        """Parse a WHERE clause with AND binding tighter than OR."""
+        return self._parse_or()
 
-        while self._match(TokenType.AND, TokenType.OR):
-            if self._current().type == TokenType.AND:
-                operator = 'AND'
-            else:
-                operator = 'OR'
+    def _parse_or(self) -> WhereClause:
+        """Parse OR-separated AND groups."""
+        conditions = [self._parse_and()]
+        while self._match(TokenType.OR):
             self._advance()
-            conditions.append(self._parse_condition())
+            conditions.append(self._parse_and())
+        if len(conditions) == 1:
+            if isinstance(conditions[0], WhereClause):
+                return conditions[0]
+            return WhereClause(conditions=conditions, operator='AND')
+        return WhereClause(conditions=conditions, operator='OR')
 
-        return WhereClause(conditions=conditions, operator=operator)
+    def _parse_and(self) -> Condition | WhereClause:
+        """Parse AND-separated predicates."""
+        conditions = [self._parse_predicate()]
+        while self._match(TokenType.AND):
+            self._advance()
+            conditions.append(self._parse_predicate())
+        if len(conditions) == 1:
+            return conditions[0]
+        return WhereClause(conditions=conditions, operator='AND')
+
+    def _parse_predicate(self) -> Condition | WhereClause:
+        """Parse a parenthesized clause or a single condition."""
+        if self._match(TokenType.LPAREN):
+            self._advance()
+            clause = self._parse_or()
+            self._expect(TokenType.RPAREN)
+            return clause
+        return self._parse_condition()
 
     def _parse_condition(self) -> Condition:
         """Parse a single condition."""
-        # Check for NOT
+        negated = False
         if self._match(TokenType.NOT):
             self._advance()
+            negated = True
 
         # Parse column (possibly with table prefix)
         table_alias = None
@@ -594,6 +641,27 @@ class Parser:
             column = self._expect(TokenType.IDENTIFIER).value
 
         # Parse operator
+        if self._match(TokenType.IS):
+            self._advance()
+            if self._match(TokenType.NOT):
+                self._advance()
+                self._expect(TokenType.NULL)
+                return Condition(
+                    column=column,
+                    operator='IS NOT NULL',
+                    value=None,
+                    table_alias=table_alias,
+                    negated=negated,
+                )
+            self._expect(TokenType.NULL)
+            return Condition(
+                column=column,
+                operator='IS NULL',
+                value=None,
+                table_alias=table_alias,
+                negated=negated,
+            )
+
         if self._match(TokenType.EQUALS):
             op = '='
             self._advance()
@@ -637,7 +705,7 @@ class Parser:
         else:
             value = self._parse_value()
 
-        return Condition(column=column, operator=op, value=value, table_alias=table_alias)
+        return Condition(column=column, operator=op, value=value, table_alias=table_alias, negated=negated)
 
     def _parse_value(self) -> Any:
         """Parse a literal value."""
@@ -722,9 +790,7 @@ class Parser:
             self._advance()
         self._expect(TokenType.RPAREN)
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return InsertQuery(table=table, columns=columns, values=values)
 
@@ -752,9 +818,7 @@ class Parser:
             self._advance()
             where = self._parse_where()
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return UpdateQuery(table=table, set_clause=set_clause, where=where)
 
@@ -771,9 +835,7 @@ class Parser:
             self._advance()
             where = self._parse_where()
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return DeleteQuery(table=table, where=where)
 
@@ -796,9 +858,7 @@ class Parser:
             self._advance()
         self._expect(TokenType.RPAREN)
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return CreateTableQuery(table=table, columns=columns)
 
@@ -836,9 +896,7 @@ class Parser:
 
         table = self._expect(TokenType.IDENTIFIER).value
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return DropTableQuery(table=table)
 

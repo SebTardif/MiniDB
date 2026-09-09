@@ -2,8 +2,9 @@
 
 from .column import Column, Schema
 from .errors import MiniDBError, TableExistsError, TableNotFoundError
-from .parser import CreateTableQuery, DropTableQuery, parse_sql
+from .parser import CreateTableQuery, DropTableQuery, SelectQuery, parse_sql
 from .persistence import _deserialize, _serialize
+from .planner import QueryPlanner
 from .query import QueryExecutor
 from .table import Table
 from .types import QueryResult, Row
@@ -142,12 +143,33 @@ class MiniDB:
             List of row dictionaries
 
         Raises:
-            MiniDBError: If query execution fails
+            MiniDBError: If the statement is not SELECT or execution fails
         """
         result = self.execute(sql)
         if isinstance(result, list):
             return result
-        raise MiniDBError('Query did not return rows')
+        raise MiniDBError('query() only runs SELECT; use execute() for INSERT, UPDATE, DELETE, CREATE, or DROP')
+
+    def explain(self, sql: str) -> str:
+        """
+        Return the query plan for a SELECT statement.
+
+        Args:
+            sql: SELECT statement
+
+        Returns:
+            String representation of the planned scan
+
+        Raises:
+            MiniDBError: If the statement is not SELECT
+            TableNotFoundError: If the FROM table does not exist
+        """
+        query = parse_sql(sql)
+        if not isinstance(query, SelectQuery):
+            raise MiniDBError('explain() is SELECT-only')
+        if query.table not in self._tables:
+            raise TableNotFoundError(query.table)
+        return str(QueryPlanner(self._tables[query.table]).plan_select(query))
 
     def save(self, filepath: str) -> None:
         """

@@ -3,7 +3,7 @@
 import pytest
 
 from minidb import Column, ColumnType, MiniDB
-from minidb.errors import SyntaxError_
+from minidb.errors import ColumnNotFoundError, SyntaxError_, TypeMismatchError
 
 
 class TestParserErrors:
@@ -33,6 +33,53 @@ class TestParserErrors:
         db = MiniDB()
         with pytest.raises(SyntaxError_):
             db.execute('')
+
+    def test_having_after_select_is_rejected(self):
+        """HAVING is not supported and leftover tokens must not be ignored."""
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Alice')")
+        with pytest.raises(SyntaxError_):
+            db.query('SELECT * FROM users HAVING COUNT(*) > 1')
+        with pytest.raises(SyntaxError_):
+            db.query('SELECT * FROM users GROUP BY name HAVING COUNT(*) > 1')
+
+    def test_offset_after_select_is_rejected(self):
+        """OFFSET is leftover syntax and must raise SyntaxError_."""
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        with pytest.raises(SyntaxError_):
+            db.query('SELECT * FROM users OFFSET 1')
+
+    def test_optional_semicolon_still_works(self):
+        """A trailing semicolon is still accepted."""
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice');")
+        results = db.query('SELECT * FROM users;')
+        assert len(results) == 1
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
 
 
 class TestTypeValidation:
@@ -66,6 +113,106 @@ class TestTypeValidation:
         with pytest.raises(DuplicateKeyError) as exc_info:
             db.execute('INSERT INTO t (id) VALUES (42)')
         assert '42' in str(exc_info.value)
+
+    def test_insert_type_mismatch(self):
+        """INSERT of a non-castable value raises TypeMismatchError."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, age INTEGER)')
+        with pytest.raises(TypeMismatchError):
+            db.execute("INSERT INTO t (id, age) VALUES (1, 'not-a-number')")
+
+    def test_update_type_mismatch(self):
+        """UPDATE of a non-castable value raises TypeMismatchError."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, age INTEGER)')
+        db.execute('INSERT INTO t (id, age) VALUES (1, 30)')
+        with pytest.raises(TypeMismatchError):
+            db.execute("UPDATE t SET age = 'not-a-number' WHERE id = 1")
+        results = db.query('SELECT age FROM t WHERE id = 1')
+        assert results[0]['age'] == 30
+
+
+class TestUnknownColumns:
+    """Unknown column names must raise ColumnNotFoundError."""
+
+    @pytest.fixture
+    def db(self):
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+        return db
+
+    def test_select_unknown_column(self, db):
+        """SELECT of a missing column raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT missing FROM users')
+
+    def test_where_unknown_column(self, db):
+        """WHERE on a missing column raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT * FROM users WHERE ghost = 1')
+
+    def test_update_unknown_column(self, db):
+        """UPDATE of a missing column raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.execute('UPDATE users SET ghost = 1')
+        results = db.query('SELECT id, name FROM users ORDER BY id')
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+        assert results[1]['id'] == 2
+        assert results[1]['name'] == 'Bob'
+
+    def test_select_star_still_works(self, db):
+        """SELECT * still returns every unprefixed column."""
+        results = db.query('SELECT * FROM users ORDER BY id')
+        assert len(results) == 2
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+        assert results[1]['id'] == 2
+        assert results[1]['name'] == 'Bob'
+
+    def test_select_qualified_column_single_table(self, db):
+        """Qualified users.id on a single-table scan falls back to the unprefixed key."""
+        results = db.query('SELECT users.id, users.name FROM users WHERE users.id = 1')
+        assert len(results) == 1
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+
+    def test_left_join_null_right_column_is_not_unknown(self, db):
+        """A NULL right-side column after LEFT JOIN is present, not missing."""
+        db.create_table(
+            'orders',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('user_id', ColumnType.INTEGER),
+                Column('product', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO orders (id, user_id, product) VALUES (1, 1, 'Widget')")
+
+        results = db.query("""
+            SELECT users.name, orders.product
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+        """)
+        by_name = {r['name']: r['product'] for r in results}
+        assert by_name['Alice'] == 'Widget'
+        assert by_name['Bob'] is None
+
+        matched = db.query("""
+            SELECT users.name
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+            WHERE orders.product = 'Widget'
+        """)
+        assert [r['name'] for r in matched] == ['Alice']
 
 
 class TestWhereClause:
@@ -160,6 +307,20 @@ class TestWhereClause:
         assert 'Charlie' in names
         assert 'Eve' in names
 
+    def test_where_and_binds_tighter_than_or(self, db):
+        """AND binds tighter than OR: age < 26 OR (age > 32 AND active)."""
+        results = db.query('SELECT * FROM users WHERE age < 26 OR age > 32 AND active = true')
+
+        names = {r['name'] for r in results}
+        assert names == {'Bob', 'Charlie'}
+
+    def test_where_parentheses(self, db):
+        """Parentheses override precedence: (age < 26 OR age > 32) AND active."""
+        results = db.query('SELECT * FROM users WHERE (age < 26 OR age > 32) AND active = true')
+
+        names = {r['name'] for r in results}
+        assert names == {'Charlie'}
+
     def test_where_like_prefix(self, db):
         """Test WHERE with LIKE pattern matching (prefix)."""
         results = db.query("SELECT * FROM users WHERE name LIKE 'A%'")
@@ -207,6 +368,57 @@ class TestWhereClause:
         names = {r['name'] for r in results}
         assert 'Bob' in names
         assert 'Eve' in names
+
+    def test_where_not_boolean(self, db):
+        """NOT inverts a boolean equality."""
+        results = db.query('SELECT * FROM users WHERE NOT active = true')
+
+        names = {r['name'] for r in results}
+        assert names == {'Bob', 'Eve'}
+
+    def test_where_not_comparison(self, db):
+        """NOT age > 30 matches ages that are not greater than 30."""
+        results = db.query('SELECT * FROM users WHERE NOT age > 30')
+
+        names = {r['name'] for r in results}
+        assert names == {'Alice', 'Bob', 'Diana'}
+
+    def test_where_not_primary_key(self, db):
+        """NOT on a PK must not plan the un-negated index lookup."""
+        results = db.query('SELECT name FROM users WHERE NOT id = 1')
+        names = {r['name'] for r in results}
+        assert names == {'Bob', 'Charlie', 'Diana', 'Eve'}
+
+        results = db.query('SELECT name FROM users WHERE NOT id > 1')
+        names = {r['name'] for r in results}
+        assert names == {'Alice'}
+
+    def test_where_is_null(self):
+        """WHERE age IS NULL matches a nullable missing age."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO people (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO people (id, name) VALUES (2, 'Bob')")
+        results = db.query('SELECT name FROM people WHERE age IS NULL')
+        assert [r['name'] for r in results] == ['Bob']
+
+    def test_where_is_not_null(self):
+        """WHERE age IS NOT NULL excludes the missing age."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO people (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO people (id, name) VALUES (2, 'Bob')")
+        results = db.query('SELECT name FROM people WHERE age IS NOT NULL')
+        assert [r['name'] for r in results] == ['Alice']
+
+    def test_where_not_is_null_inverts(self):
+        """NOT age IS NULL inverts the IS NULL predicate."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO people (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO people (id, name) VALUES (2, 'Bob')")
+        results = db.query('SELECT name FROM people WHERE NOT age IS NULL')
+        assert [r['name'] for r in results] == ['Alice']
 
     def test_order_by_asc(self, db):
         """Test ORDER BY ascending."""
@@ -261,3 +473,99 @@ class TestWhereClause:
 
         assert len(results) == 1
         assert results[0]['name'] == 'Diana'
+
+    def test_order_by_unprojected_column(self, db):
+        """ORDER BY a column that was not selected raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT name FROM users ORDER BY age')
+
+    def test_order_by_alias(self, db):
+        """ORDER BY can use a SELECT alias as the result key."""
+        results = db.query('SELECT name AS n FROM users ORDER BY n')
+
+        assert [r['n'] for r in results] == ['Alice', 'Bob', 'Charlie', 'Diana', 'Eve']
+
+    def test_select_column_as_alias(self, db):
+        """SELECT name AS n keys the result as n, not name."""
+        results = db.query('SELECT name AS n FROM users WHERE id = 1')
+
+        assert len(results) == 1
+        assert results[0]['n'] == 'Alice'
+        assert 'name' not in results[0]
+
+    def test_select_column_implicit_alias(self, db):
+        """SELECT name n also keys the result as n."""
+        results = db.query('SELECT name n FROM users WHERE id = 1')
+
+        assert len(results) == 1
+        assert results[0]['n'] == 'Alice'
+        assert 'name' not in results[0]
+
+    def test_select_count_as_alias(self, db):
+        """SELECT COUNT(*) AS cnt keys the aggregate as cnt."""
+        results = db.query('SELECT COUNT(*) AS cnt FROM users')
+
+        assert len(results) == 1
+        assert results[0]['cnt'] == 5
+        assert 'COUNT(*)' not in results[0]
+
+    def test_select_unaliased_columns(self, db):
+        """Unaliased SELECT still uses the column names."""
+        results = db.query('SELECT name, age FROM users WHERE id = 1')
+
+        assert len(results) == 1
+        assert results[0]['name'] == 'Alice'
+        assert results[0]['age'] == 30
+
+
+class TestDistinct:
+    """Tests for SELECT DISTINCT."""
+
+    @pytest.fixture
+    def db(self):
+        """Two Alices and one Bob (same name/age projection for the Alices)."""
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+                Column('age', ColumnType.INTEGER),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (2, 'Alice', 30)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (3, 'Bob', 25)")
+        return db
+
+    def test_select_distinct_name(self, db):
+        """SELECT DISTINCT name drops the duplicate Alice."""
+        results = db.query('SELECT DISTINCT name FROM users')
+        assert [r['name'] for r in results] == ['Alice', 'Bob']
+
+    def test_select_distinct_star_same_projection(self, db):
+        """PK blocks identical full rows; DISTINCT on the shared name/age projection."""
+        results = db.query('SELECT DISTINCT name, age FROM users')
+        assert len(results) == 2
+        assert results[0] == {'name': 'Alice', 'age': 30}
+        assert results[1] == {'name': 'Bob', 'age': 25}
+
+    def test_select_distinct_star_identical_rows(self):
+        """SELECT DISTINCT * after two identical inserts (no PK)."""
+        db = MiniDB()
+        db.execute('CREATE TABLE dupes (name STRING, age INTEGER)')
+        db.execute("INSERT INTO dupes (name, age) VALUES ('Alice', 30)")
+        db.execute("INSERT INTO dupes (name, age) VALUES ('Alice', 30)")
+        results = db.query('SELECT DISTINCT * FROM dupes')
+        assert results == [{'name': 'Alice', 'age': 30}]
+
+    def test_select_without_distinct_keeps_duplicates(self, db):
+        """SELECT name without DISTINCT still returns both Alices."""
+        results = db.query('SELECT name FROM users')
+        assert [r['name'] for r in results] == ['Alice', 'Alice', 'Bob']
+
+    def test_select_distinct_limit_1(self, db):
+        """DISTINCT + LIMIT 1 returns one unique row."""
+        results = db.query('SELECT DISTINCT name FROM users LIMIT 1')
+        assert len(results) == 1
+        assert results[0]['name'] == 'Alice'

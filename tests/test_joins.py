@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import Column, ColumnType, MiniDB
+from minidb import Column, ColumnType, InvalidQueryError, MiniDB, TableNotFoundError
 
 
 class TestJoins:
@@ -141,3 +141,166 @@ class TestJoins:
         counts = {r['name']: r['COUNT(*)'] for r in results}
         assert counts['Alice'] == 2
         assert counts['Bob'] == 3
+
+    def test_left_join_includes_unmatched(self, db):
+        """LEFT JOIN keeps unmatched left rows with NULL right columns."""
+        results = db.query("""
+            SELECT users.id, users.name, orders.product
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+        """)
+
+        assert len(results) == 6  # 5 matched orders plus Charlie
+
+        charlie = [r for r in results if r['name'] == 'Charlie']
+        assert len(charlie) == 1
+        assert charlie[0]['id'] == 3
+        assert charlie[0]['product'] is None
+
+        alice = [r for r in results if r['name'] == 'Alice']
+        assert len(alice) == 2
+        assert {r['product'] for r in alice} == {'Widget', 'Gadget'}
+
+    def test_left_join_is_null(self, db):
+        """Charlie's unmatched LEFT JOIN row matches orders.product IS NULL."""
+        results = db.query("""
+            SELECT users.name
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+            WHERE orders.product IS NULL
+        """)
+        assert [r['name'] for r in results] == ['Charlie']
+
+    def test_left_join_is_not_null(self, db):
+        """Alice's matched LEFT JOIN rows match orders.product IS NOT NULL."""
+        results = db.query("""
+            SELECT users.name, orders.product
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+            WHERE orders.product IS NOT NULL
+        """)
+        assert len(results) == 5
+        assert {r['name'] for r in results} == {'Alice', 'Bob'}
+        alice = [r for r in results if r['name'] == 'Alice']
+        assert len(alice) == 2
+        assert all(r['product'] is not None for r in results)
+
+    def test_left_join_preserves_left_pk(self, db):
+        """LEFT JOIN must not overwrite the left table primary key with NULL."""
+        results = db.query("""
+            SELECT users.id, users.name
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+        """)
+
+        assert len(results) == 6
+        charlie = [r for r in results if r['name'] == 'Charlie']
+        assert len(charlie) == 1
+        assert charlie[0]['id'] == 3
+        assert charlie[0]['id'] is not None
+
+        ids_by_name = {}
+        for row in results:
+            ids_by_name.setdefault(row['name'], set()).add(row['id'])
+        assert ids_by_name['Alice'] == {1}
+        assert ids_by_name['Bob'] == {2}
+        assert ids_by_name['Charlie'] == {3}
+
+    def test_join_unknown_table(self, db):
+        """JOIN against a missing table raises TableNotFoundError."""
+        with pytest.raises(TableNotFoundError):
+            db.query('SELECT * FROM users JOIN ghost ON users.id = ghost.user_id')
+
+    def test_join_unknown_on_column(self, db):
+        """JOIN ON a missing column raises ColumnNotFoundError."""
+        from minidb.errors import ColumnNotFoundError
+
+        with pytest.raises(ColumnNotFoundError):
+            db.query("""
+                SELECT users.name
+                FROM users
+                JOIN orders ON users.id = orders.ghost
+            """)
+
+    def test_join_reversed_qualifiers(self, db):
+        """ON orders.user_id = users.id matches the same 5 rows as the usual order."""
+        usual = db.query("""
+            SELECT users.name, orders.product, orders.total
+            FROM users
+            JOIN orders ON users.id = orders.user_id
+        """)
+        reversed_on = db.query("""
+            SELECT users.name, orders.product, orders.total
+            FROM users
+            JOIN orders ON orders.user_id = users.id
+        """)
+
+        assert len(usual) == 5
+        assert len(reversed_on) == 5
+
+        usual_pairs = sorted((r['name'], r['product'], r['total']) for r in usual)
+        reversed_pairs = sorted((r['name'], r['product'], r['total']) for r in reversed_on)
+        assert reversed_pairs == usual_pairs
+
+        names = {r['name'] for r in reversed_on}
+        assert names == {'Alice', 'Bob'}
+
+    def test_left_join_reversed_qualifiers_includes_unmatched(self, db):
+        """LEFT JOIN with reversed ON qualifiers still includes Charlie."""
+        results = db.query("""
+            SELECT users.id, users.name, orders.product
+            FROM users
+            LEFT JOIN orders ON orders.user_id = users.id
+        """)
+
+        assert len(results) == 6
+        charlie = [r for r in results if r['name'] == 'Charlie']
+        assert len(charlie) == 1
+        assert charlie[0]['id'] == 3
+        assert charlie[0]['product'] is None
+
+        alice = [r for r in results if r['name'] == 'Alice']
+        assert len(alice) == 2
+
+    def test_join_unknown_qualifier(self, db):
+        """ON ghost.id = users.id raises InvalidQueryError."""
+        with pytest.raises(InvalidQueryError, match='ghost'):
+            db.query("""
+                SELECT users.name
+                FROM users
+                JOIN orders ON ghost.id = users.id
+            """)
+
+    def test_join_unqualified_on_keeps_operand_order(self, db):
+        """Unqualified ON uses first operand as FROM side and second as JOIN side."""
+        results = db.query("""
+            SELECT users.name, orders.product
+            FROM users
+            JOIN orders ON id = user_id
+        """)
+        assert len(results) == 5
+        names = {r['name'] for r in results}
+        assert names == {'Alice', 'Bob'}
+
+    def test_right_join_not_supported(self, db):
+        """RIGHT JOIN raises; INNER and LEFT JOIN still work."""
+        with pytest.raises(InvalidQueryError, match='RIGHT JOIN is not supported'):
+            db.query("""
+                SELECT users.name, orders.product
+                FROM users
+                RIGHT JOIN orders ON users.id = orders.user_id
+            """)
+
+        inner = db.query("""
+            SELECT users.name, orders.product
+            FROM users
+            JOIN orders ON users.id = orders.user_id
+        """)
+        assert len(inner) == 5
+
+        left = db.query("""
+            SELECT users.name, orders.product
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+        """)
+        assert len(left) == 6

@@ -68,3 +68,14 @@ minidb/
 tests/
   test_*.py        # Test files matching source modules
 ```
+
+## How to add a SQL clause
+
+Copy an existing clause such as LIMIT or LEFT JOIN:
+
+1. TokenType in minidb/types.py
+2. Lexer.KEYWORDS in minidb/parser.py
+3. AST field on SelectQuery / relevant dataclass
+4. Parse slot in `_parse_select` (before `_expect_end`)
+5. Execution step in QueryExecutor
+6. Tests in the matching tests/test_*.py

@@ -2,7 +2,8 @@
 
 import pytest
 
-from minidb import Column, ColumnType, MiniDB, TableExistsError, TableNotFoundError
+from minidb import Column, ColumnType, InvalidQueryError, MiniDB, QueryExecutor, TableExistsError, TableNotFoundError
+from minidb.parser import parse_sql
 
 
 class TestDatabaseLifecycle:
@@ -54,6 +55,18 @@ class TestDatabaseLifecycle:
         assert 'products' in db
         table = db.get_table('products')
         assert table.primary_key == 'id'
+
+    def test_query_executor_create_table_points_at_minidb_execute(self):
+        """QueryExecutor CREATE TABLE tells the caller to use MiniDB.execute()."""
+        executor = QueryExecutor({})
+        with pytest.raises(InvalidQueryError, match=r'MiniDB.execute'):
+            executor.execute(parse_sql('CREATE TABLE t (id INTEGER PRIMARY KEY)'))
+
+    def test_query_executor_drop_table_points_at_minidb_execute(self):
+        """QueryExecutor DROP TABLE tells the caller to use MiniDB.execute()."""
+        executor = QueryExecutor({})
+        with pytest.raises(InvalidQueryError, match=r'MiniDB.execute'):
+            executor.execute(parse_sql('DROP TABLE t'))
 
     def test_table_exists_error(self):
         """Test that creating a duplicate table raises an error."""
@@ -110,7 +123,16 @@ class TestDatabaseLifecycle:
 
         db = MiniDB()
         db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
-        with pytest.raises(MiniDBError, match='Query did not return rows'):
+        with pytest.raises(MiniDBError, match=r'query\(\) only runs SELECT'):
+            db.query("INSERT INTO t (id, v) VALUES (1, 'x')")
+
+    def test_query_insert_mentions_execute(self):
+        """INSERT via query() tells the caller to use execute()."""
+        from minidb.errors import MiniDBError
+
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
+        with pytest.raises(MiniDBError, match=r'use execute\(\)'):
             db.query("INSERT INTO t (id, v) VALUES (1, 'x')")
 
     def test_repr(self):
@@ -144,3 +166,32 @@ class TestDatabaseLifecycle:
         db = MiniDB()
         with pytest.raises(TableNotFoundError):
             db.query('SELECT * FROM ghost')
+
+
+class TestExplain:
+    """Tests for MiniDB.explain()."""
+
+    def test_explain_pk_equality_uses_index_scan(self):
+        """PK equality WHERE id = 1 plans an index_scan."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        plan = db.explain('SELECT * FROM users WHERE id = 1')
+        assert 'index_scan' in plan
+
+    def test_explain_unindexed_column_uses_table_scan(self):
+        """An unindexed column plans a table_scan."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        plan = db.explain("SELECT * FROM users WHERE name = 'Alice'")
+        assert 'table_scan' in plan
+
+    def test_explain_insert_raises(self):
+        """explain() is SELECT-only."""
+        from minidb.errors import MiniDBError
+
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        with pytest.raises(MiniDBError, match='SELECT-only'):
+            db.explain("INSERT INTO users (id, name) VALUES (2, 'Bob')")
