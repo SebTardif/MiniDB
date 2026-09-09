@@ -90,6 +90,47 @@ class TestCRUD:
         results = db.query('SELECT salary FROM users WHERE id = 1')
         assert results[0]['salary'] == 60000.0
 
+    def test_update_duplicate_primary_key(self, db):
+        """Updating a primary key to a value already used by another row fails."""
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (2, 'Bob', 25, 45000.0, false)")
+
+        with pytest.raises(DuplicateKeyError):
+            db.execute('UPDATE users SET id = 1 WHERE id = 2')
+
+        results = db.query('SELECT id, name FROM users ORDER BY id')
+        assert len(results) == 2
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+        assert results[1]['id'] == 2
+        assert results[1]['name'] == 'Bob'
+
+    def test_update_primary_key_same_row_noop(self, db):
+        """Setting a primary key to its current value is a no-op success."""
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")
+
+        affected = db.execute('UPDATE users SET id = 1 WHERE id = 1')
+
+        assert affected == 1
+        results = db.query('SELECT id, name FROM users WHERE id = 1')
+        assert len(results) == 1
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+
+    def test_update_non_primary_key_column(self, db):
+        """Non-primary-key updates still succeed after PK uniqueness checks."""
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (2, 'Bob', 25, 45000.0, false)")
+
+        affected = db.execute("UPDATE users SET name = 'X' WHERE id = 2")
+
+        assert affected == 1
+        results = db.query('SELECT id, name FROM users ORDER BY id')
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+        assert results[1]['id'] == 2
+        assert results[1]['name'] == 'X'
+
     def test_update_multiple_rows(self, db):
         """Test updating multiple rows."""
         db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")

@@ -142,6 +142,16 @@ class Table:
                 # Validate the new row
                 validated = self.schema.validate_row(new_row, allow_missing=True)
 
+                pk_column = self.schema.primary_key
+                if pk_column and pk_column in updates:
+                    new_pk = validated[pk_column]
+                    if new_pk is not None:
+                        index = self.get_index(pk_column)
+                        if index and index.has_value(new_pk):
+                            existing_ids = index.lookup(new_pk)
+                            if any(existing_id != row_id for existing_id in existing_ids):
+                                raise DuplicateKeyError(new_pk)
+
                 # Update indexes
                 self._index_manager.update_row(old_row, validated, row_id)
 
