@@ -264,10 +264,13 @@ class QueryExecutor:
         cond_value = condition.value
         op = condition.operator
 
-        if value is None:
+        if op == 'IS NULL':
+            result = value is None
+        elif op == 'IS NOT NULL':
+            result = value is not None
+        elif value is None:
             return False
-
-        if op == '=':
+        elif op == '=':
             result = value == cond_value
         elif op == '!=':
             result = value != cond_value

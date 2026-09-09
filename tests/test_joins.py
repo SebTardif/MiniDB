@@ -161,6 +161,30 @@ class TestJoins:
         assert len(alice) == 2
         assert {r['product'] for r in alice} == {'Widget', 'Gadget'}
 
+    def test_left_join_is_null(self, db):
+        """Charlie's unmatched LEFT JOIN row matches orders.product IS NULL."""
+        results = db.query("""
+            SELECT users.name
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+            WHERE orders.product IS NULL
+        """)
+        assert [r['name'] for r in results] == ['Charlie']
+
+    def test_left_join_is_not_null(self, db):
+        """Alice's matched LEFT JOIN rows match orders.product IS NOT NULL."""
+        results = db.query("""
+            SELECT users.name, orders.product
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+            WHERE orders.product IS NOT NULL
+        """)
+        assert len(results) == 5
+        assert {r['name'] for r in results} == {'Alice', 'Bob'}
+        alice = [r for r in results if r['name'] == 'Alice']
+        assert len(alice) == 2
+        assert all(r['product'] is not None for r in results)
+
     def test_left_join_preserves_left_pk(self, db):
         """LEFT JOIN must not overwrite the left table primary key with NULL."""
         results = db.query("""

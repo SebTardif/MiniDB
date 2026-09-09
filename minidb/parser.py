@@ -21,7 +21,7 @@ class Condition:
     """Represents a WHERE condition."""
 
     column: str
-    operator: str  # '=', '!=', '>', '>=', '<', '<=', 'LIKE', 'IN'
+    operator: str  # '=', '!=', '>', '>=', '<', '<=', 'LIKE', 'IN', 'IS NULL', 'IS NOT NULL'
     value: Any
     table_alias: str | None = None  # For JOIN column references
     negated: bool = False
@@ -174,6 +174,7 @@ class Lexer:
         'PRIMARY': TokenType.PRIMARY,
         'KEY': TokenType.KEY,
         'NULL': TokenType.NULL,
+        'IS': TokenType.IS,
         'LIMIT': TokenType.LIMIT,
         'AS': TokenType.AS,
         'DISTINCT': TokenType.DISTINCT,
@@ -640,6 +641,27 @@ class Parser:
             column = self._expect(TokenType.IDENTIFIER).value
 
         # Parse operator
+        if self._match(TokenType.IS):
+            self._advance()
+            if self._match(TokenType.NOT):
+                self._advance()
+                self._expect(TokenType.NULL)
+                return Condition(
+                    column=column,
+                    operator='IS NOT NULL',
+                    value=None,
+                    table_alias=table_alias,
+                    negated=negated,
+                )
+            self._expect(TokenType.NULL)
+            return Condition(
+                column=column,
+                operator='IS NULL',
+                value=None,
+                table_alias=table_alias,
+                negated=negated,
+            )
+
         if self._match(TokenType.EQUALS):
             op = '='
             self._advance()

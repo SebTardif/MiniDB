@@ -7,7 +7,7 @@ A miniature in-memory database with SQL-like query support, built from scratch u
 - **Typed Columns**: INTEGER, STRING, FLOAT, BOOLEAN
 - **CRUD Operations**: INSERT, SELECT, UPDATE, DELETE
 - **SQL-like Query Language**:
-  - WHERE with AND/OR, NOT, parentheses, and comparisons (=, >, <, >=, <=, !=, LIKE, IN)
+  - WHERE with AND/OR, NOT, parentheses, comparisons (=, >, <, >=, <=, !=, LIKE, IN), and IS NULL / IS NOT NULL
   - SELECT column aliases (`col AS alias`)
   - SELECT DISTINCT
   - ORDER BY (ASC/DESC)
@@ -151,6 +151,8 @@ WHERE col <= value
 WHERE col != value
 WHERE col LIKE 'pattern%'     -- % matches any sequence
 WHERE col IN (1, 2, 3)
+WHERE col IS NULL
+WHERE col IS NOT NULL
 WHERE cond1 AND cond2
 WHERE cond1 OR cond2
 WHERE NOT col = value

@@ -383,6 +383,33 @@ class TestWhereClause:
         names = {r['name'] for r in results}
         assert names == {'Alice', 'Bob', 'Diana'}
 
+    def test_where_is_null(self):
+        """WHERE age IS NULL matches a nullable missing age."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO people (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO people (id, name) VALUES (2, 'Bob')")
+        results = db.query('SELECT name FROM people WHERE age IS NULL')
+        assert [r['name'] for r in results] == ['Bob']
+
+    def test_where_is_not_null(self):
+        """WHERE age IS NOT NULL excludes the missing age."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO people (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO people (id, name) VALUES (2, 'Bob')")
+        results = db.query('SELECT name FROM people WHERE age IS NOT NULL')
+        assert [r['name'] for r in results] == ['Alice']
+
+    def test_where_not_is_null_inverts(self):
+        """NOT age IS NULL inverts the IS NULL predicate."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO people (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO people (id, name) VALUES (2, 'Bob')")
+        results = db.query('SELECT name FROM people WHERE NOT age IS NULL')
+        assert [r['name'] for r in results] == ['Alice']
+
     def test_order_by_asc(self, db):
         """Test ORDER BY ascending."""
         results = db.query('SELECT * FROM users ORDER BY age ASC')
