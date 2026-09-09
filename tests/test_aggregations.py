@@ -173,6 +173,9 @@ class TestAggregations:
         assert names == {'A', 'B'}
         assert all('COUNT(*)' not in r for r in results)
 
+        empty = db.query('SELECT category FROM sales GROUP BY category HAVING COUNT(*) > 3')
+        assert empty == []
+
     def test_group_by_having_count(self, db):
         """HAVING COUNT(*) > 2 keeps both categories (A and B each have 3)."""
         results = db.query('SELECT category, COUNT(*) FROM sales GROUP BY category HAVING COUNT(*) > 2')
