@@ -68,7 +68,7 @@ class QueryExecutor:
             result_rows = self._execute_group_by(indexed_rows, query)
         elif self._has_aggregates(query.columns):
             # Aggregate without GROUP BY - aggregate all rows
-            result_rows = self._execute_aggregation(indexed_rows, query.columns)
+            result_rows = self._execute_aggregation(indexed_rows, query)
         else:
             # Project columns
             result_rows = self._project_columns(indexed_rows, query.columns, query.table)
@@ -143,6 +143,10 @@ class QueryExecutor:
             right_rows = list(right_table.scan())
 
             from_column, join_column = self._join_on_columns(query.table, join)
+            if not left_table.schema.has_column(from_column):
+                raise ColumnNotFoundError(from_column, query.table)
+            if not right_table.schema.has_column(join_column):
+                raise ColumnNotFoundError(join_column, join.table)
 
             # Build index on JOIN table for the JOIN-side column
             right_index = defaultdict(list)
@@ -325,8 +329,25 @@ class QueryExecutor:
         """Check if any column has an aggregate function."""
         return any(col.aggregate for col in columns)
 
+    def _column_in_query_schema(self, column: str, query: SelectQuery) -> bool:
+        """Return True if column exists on the FROM table or any JOIN table."""
+        main = self.tables.get(query.table)
+        if main is not None and main.schema.has_column(column):
+            return True
+        for join in query.joins:
+            joined = self.tables.get(join.table)
+            if joined is not None and joined.schema.has_column(column):
+                return True
+        return False
+
     def _execute_group_by(self, rows: list[tuple[int, Row]], query: SelectQuery) -> list[Row]:
         """Execute GROUP BY aggregation."""
+        sample = rows[0][1] if rows else None
+        for col in query.group_by:
+            in_row = sample is not None and col in sample
+            if not in_row and not self._column_in_query_schema(col, query):
+                raise ColumnNotFoundError(col, query.table)
+
         groups = defaultdict(list)
 
         for _row_id, row in rows:
@@ -345,7 +366,7 @@ class QueryExecutor:
             for sel_col in query.columns:
                 if sel_col.aggregate:
                     agg_value = self._compute_aggregate(
-                        sel_col.aggregate.function, sel_col.aggregate.column, group_rows
+                        sel_col.aggregate.function, sel_col.aggregate.column, group_rows, query
                     )
                     agg_name = sel_col.alias or f'{sel_col.aggregate.function}({sel_col.aggregate.column})'
                     result_row[agg_name] = agg_value
@@ -356,21 +377,24 @@ class QueryExecutor:
 
         return results
 
-    def _execute_aggregation(self, rows: list[tuple[int, Row]], columns: list[SelectColumn]) -> list[Row]:
+    def _execute_aggregation(self, rows: list[tuple[int, Row]], query: SelectQuery) -> list[Row]:
         """Execute aggregation without GROUP BY."""
         row_list = [row for _, row in rows]
         result_row = {}
 
-        for col in columns:
+        for col in query.columns:
             if col.aggregate:
-                agg_value = self._compute_aggregate(col.aggregate.function, col.aggregate.column, row_list)
+                agg_value = self._compute_aggregate(col.aggregate.function, col.aggregate.column, row_list, query)
                 agg_name = col.alias or f'{col.aggregate.function}({col.aggregate.column})'
                 result_row[agg_name] = agg_value
 
         return [result_row] if result_row else []
 
-    def _compute_aggregate(self, func: str, column: str, rows: list[Row]) -> Any:
+    def _compute_aggregate(self, func: str, column: str, rows: list[Row], query: SelectQuery) -> Any:
         """Compute an aggregate function value."""
+        if column != '*' and not self._column_in_query_schema(column, query):
+            raise ColumnNotFoundError(column, query.table)
+
         if func == 'COUNT':
             if column == '*':
                 return len(rows)
@@ -435,6 +459,15 @@ class QueryExecutor:
 
     def _execute_order_by(self, rows: list[Row], order_by: list[OrderByItem]) -> list[Row]:
         """Sort rows by ORDER BY columns with per-column direction."""
+        if rows:
+            sample = rows[0]
+            for item in order_by:
+                if item.table_alias:
+                    prefixed = f'{item.table_alias}.{item.column}'
+                    if prefixed not in sample and item.column not in sample:
+                        raise ColumnNotFoundError(item.column, item.table_alias)
+                elif item.column not in sample:
+                    raise ColumnNotFoundError(item.column)
 
         def _compare_rows(a: Row, b: Row) -> int:
             for item in order_by:

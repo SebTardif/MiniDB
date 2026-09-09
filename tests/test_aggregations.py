@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import Column, ColumnType, MiniDB
+from minidb import Column, ColumnNotFoundError, ColumnType, MiniDB
 
 
 class TestAggregations:
@@ -147,3 +147,20 @@ class TestAggregations:
 
         assert len(results) == 1
         assert results[0]['SUM(quantity)'] == 23  # 10+5+8
+
+    def test_group_by_unknown_column(self, db):
+        """GROUP BY a missing column raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT COUNT(*) FROM sales GROUP BY missing')
+
+    def test_sum_unknown_column(self, db):
+        """SUM of a missing column raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT SUM(missing) FROM sales')
+
+    def test_sum_unknown_column_empty_table(self):
+        """SUM of a missing column raises even when the table has no rows."""
+        db = MiniDB()
+        db.execute('CREATE TABLE empty (id INTEGER PRIMARY KEY)')
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT SUM(missing) FROM empty')

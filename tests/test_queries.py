@@ -464,6 +464,17 @@ class TestWhereClause:
         assert len(results) == 1
         assert results[0]['name'] == 'Diana'
 
+    def test_order_by_unprojected_column(self, db):
+        """ORDER BY a column that was not selected raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT name FROM users ORDER BY age')
+
+    def test_order_by_alias(self, db):
+        """ORDER BY can use a SELECT alias as the result key."""
+        results = db.query('SELECT name AS n FROM users ORDER BY n')
+
+        assert [r['n'] for r in results] == ['Alice', 'Bob', 'Charlie', 'Diana', 'Eve']
+
     def test_select_column_as_alias(self, db):
         """SELECT name AS n keys the result as n, not name."""
         results = db.query('SELECT name AS n FROM users WHERE id = 1')

@@ -211,6 +211,17 @@ class TestJoins:
         with pytest.raises(TableNotFoundError):
             db.query('SELECT * FROM users JOIN ghost ON users.id = ghost.user_id')
 
+    def test_join_unknown_on_column(self, db):
+        """JOIN ON a missing column raises ColumnNotFoundError."""
+        from minidb.errors import ColumnNotFoundError
+
+        with pytest.raises(ColumnNotFoundError):
+            db.query("""
+                SELECT users.name
+                FROM users
+                JOIN orders ON users.id = orders.ghost
+            """)
+
     def test_join_reversed_qualifiers(self, db):
         """ON orders.user_id = users.id matches the same 5 rows as the usual order."""
         usual = db.query("""
