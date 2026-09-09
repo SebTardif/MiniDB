@@ -129,6 +129,9 @@ class QueryExecutor:
         left_rows = list(left_table.scan())
 
         for join in query.joins:
+            if join.join_type == 'RIGHT':
+                raise InvalidQueryError('RIGHT JOIN is not supported; swap the tables and use LEFT JOIN')
+
             if join.table not in self.tables:
                 raise TableNotFoundError(join.table)
 

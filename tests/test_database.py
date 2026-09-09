@@ -110,7 +110,16 @@ class TestDatabaseLifecycle:
 
         db = MiniDB()
         db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
-        with pytest.raises(MiniDBError, match='Query did not return rows'):
+        with pytest.raises(MiniDBError, match=r'query\(\) only runs SELECT'):
+            db.query("INSERT INTO t (id, v) VALUES (1, 'x')")
+
+    def test_query_insert_mentions_execute(self):
+        """INSERT via query() tells the caller to use execute()."""
+        from minidb.errors import MiniDBError
+
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
+        with pytest.raises(MiniDBError, match=r'use execute\(\)'):
             db.query("INSERT INTO t (id, v) VALUES (1, 'x')")
 
     def test_repr(self):

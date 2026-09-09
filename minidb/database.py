@@ -142,12 +142,12 @@ class MiniDB:
             List of row dictionaries
 
         Raises:
-            MiniDBError: If query execution fails
+            MiniDBError: If the statement is not SELECT or execution fails
         """
         result = self.execute(sql)
         if isinstance(result, list):
             return result
-        raise MiniDBError('Query did not return rows')
+        raise MiniDBError('query() only runs SELECT; use execute() for INSERT, UPDATE, DELETE, CREATE, or DROP')
 
     def save(self, filepath: str) -> None:
         """

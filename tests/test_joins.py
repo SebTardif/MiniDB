@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import Column, ColumnType, MiniDB, TableNotFoundError
+from minidb import Column, ColumnType, InvalidQueryError, MiniDB, TableNotFoundError
 
 
 class TestJoins:
@@ -186,3 +186,26 @@ class TestJoins:
         """JOIN against a missing table raises TableNotFoundError."""
         with pytest.raises(TableNotFoundError):
             db.query('SELECT * FROM users JOIN ghost ON users.id = ghost.user_id')
+
+    def test_right_join_not_supported(self, db):
+        """RIGHT JOIN raises; INNER and LEFT JOIN still work."""
+        with pytest.raises(InvalidQueryError, match='RIGHT JOIN is not supported'):
+            db.query("""
+                SELECT users.name, orders.product
+                FROM users
+                RIGHT JOIN orders ON users.id = orders.user_id
+            """)
+
+        inner = db.query("""
+            SELECT users.name, orders.product
+            FROM users
+            JOIN orders ON users.id = orders.user_id
+        """)
+        assert len(inner) == 5
+
+        left = db.query("""
+            SELECT users.name, orders.product
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+        """)
+        assert len(left) == 6
