@@ -2,7 +2,8 @@
 
 import pytest
 
-from minidb import Column, ColumnType, MiniDB, TableExistsError, TableNotFoundError
+from minidb import Column, ColumnType, InvalidQueryError, MiniDB, QueryExecutor, TableExistsError, TableNotFoundError
+from minidb.parser import parse_sql
 
 
 class TestDatabaseLifecycle:
@@ -54,6 +55,18 @@ class TestDatabaseLifecycle:
         assert 'products' in db
         table = db.get_table('products')
         assert table.primary_key == 'id'
+
+    def test_query_executor_create_table_points_at_minidb_execute(self):
+        """QueryExecutor CREATE TABLE tells the caller to use MiniDB.execute()."""
+        executor = QueryExecutor({})
+        with pytest.raises(InvalidQueryError, match=r'MiniDB.execute'):
+            executor.execute(parse_sql('CREATE TABLE t (id INTEGER PRIMARY KEY)'))
+
+    def test_query_executor_drop_table_points_at_minidb_execute(self):
+        """QueryExecutor DROP TABLE tells the caller to use MiniDB.execute()."""
+        executor = QueryExecutor({})
+        with pytest.raises(InvalidQueryError, match=r'MiniDB.execute'):
+            executor.execute(parse_sql('DROP TABLE t'))
 
     def test_table_exists_error(self):
         """Test that creating a duplicate table raises an error."""

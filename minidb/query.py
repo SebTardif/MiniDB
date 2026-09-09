@@ -562,9 +562,9 @@ class QueryExecutor:
     def execute_create_table(self, query: CreateTableQuery) -> None:
         """Execute a CREATE TABLE query."""
         # This is handled by the Database class
-        raise InvalidQueryError('CREATE TABLE should be handled by Database')
+        raise InvalidQueryError('CREATE TABLE should be handled by MiniDB.execute()')
 
     def execute_drop_table(self, query: DropTableQuery) -> None:
         """Execute a DROP TABLE query."""
         # This is handled by the Database class
-        raise InvalidQueryError('DROP TABLE should be handled by Database')
+        raise InvalidQueryError('DROP TABLE should be handled by MiniDB.execute()')
