@@ -77,6 +77,8 @@ class QueryExecutor:
             if not query.group_by and not self._has_aggregates(query.columns):
                 raise InvalidQueryError('HAVING requires GROUP BY or aggregate functions')
             result_rows = [row for row in result_rows if self._evaluate_where(row, query.having)]
+            keep = self._selected_output_keys(query)
+            result_rows = [{key: value for key, value in row.items() if key in keep} for row in result_rows]
 
         if query.distinct:
             result_rows = self._deduplicate_rows(result_rows)
@@ -378,9 +380,42 @@ class QueryExecutor:
                 elif sel_col.name not in result_row and sel_col.name != '*':
                     result_row[sel_col.name] = group_rows[0].get(sel_col.name)
 
+            for spec in self._having_aggregate_names(query.having):
+                if spec not in result_row:
+                    func, column = self._split_aggregate_spec(spec)
+                    result_row[spec] = self._compute_aggregate(func, column, group_rows, query)
+
             results.append(result_row)
 
         return results
+
+    def _having_aggregate_names(self, having: WhereClause | None) -> list[str]:
+        """Collect FUNC(col) names referenced by HAVING."""
+        if having is None:
+            return []
+        names: list[str] = []
+        for cond in having.conditions:
+            if isinstance(cond, Condition):
+                if '(' in cond.column and cond.column.endswith(')'):
+                    names.append(cond.column)
+            elif isinstance(cond, WhereClause):
+                names.extend(self._having_aggregate_names(cond))
+        return names
+
+    def _split_aggregate_spec(self, spec: str) -> tuple[str, str]:
+        """Split 'COUNT(*)' or 'SUM(quantity)' into (function, column)."""
+        func, rest = spec.split('(', 1)
+        return func, rest[:-1]
+
+    def _selected_output_keys(self, query: SelectQuery) -> set[str]:
+        """Keys that belong in the user-visible SELECT output."""
+        keys = set(query.group_by)
+        for col in query.columns:
+            if col.aggregate:
+                keys.add(col.alias or f'{col.aggregate.function}({col.aggregate.column})')
+            elif col.name != '*':
+                keys.add(col.name)
+        return keys
 
     def _execute_aggregation(self, rows: list[tuple[int, Row]], query: SelectQuery) -> list[Row]:
         """Execute aggregation without GROUP BY."""
@@ -392,6 +427,11 @@ class QueryExecutor:
                 agg_value = self._compute_aggregate(col.aggregate.function, col.aggregate.column, row_list, query)
                 agg_name = col.alias or f'{col.aggregate.function}({col.aggregate.column})'
                 result_row[agg_name] = agg_value
+
+        for spec in self._having_aggregate_names(query.having):
+            if spec not in result_row:
+                func, column = self._split_aggregate_spec(spec)
+                result_row[spec] = self._compute_aggregate(func, column, row_list, query)
 
         return [result_row] if result_row else []
 

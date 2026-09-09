@@ -165,6 +165,14 @@ class TestAggregations:
         with pytest.raises(ColumnNotFoundError):
             db.query('SELECT SUM(missing) FROM empty')
 
+    def test_group_by_having_count_not_in_select(self, db):
+        """HAVING COUNT(*) works even when COUNT(*) is not a SELECT column."""
+        results = db.query('SELECT category FROM sales GROUP BY category HAVING COUNT(*) > 2')
+
+        names = {r['category'] for r in results}
+        assert names == {'A', 'B'}
+        assert all('COUNT(*)' not in r for r in results)
+
     def test_group_by_having_count(self, db):
         """HAVING COUNT(*) > 2 keeps both categories (A and B each have 3)."""
         results = db.query('SELECT category, COUNT(*) FROM sales GROUP BY category HAVING COUNT(*) > 2')
