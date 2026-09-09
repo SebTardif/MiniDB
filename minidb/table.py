@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .column import Schema
-from .errors import DuplicateKeyError
+from .errors import ColumnNotFoundError, DuplicateKeyError
 from .index import IndexManager
 from .types import Row
 
@@ -136,8 +136,9 @@ class Table:
                 # Apply updates
                 for col, val in updates.items():
                     col_def = self.schema.get_column(col)
-                    if col_def is not None:
-                        new_row[col] = col_def.validate(val)
+                    if col_def is None:
+                        raise ColumnNotFoundError(col, self.name)
+                    new_row[col] = col_def.validate(val)
 
                 # Validate the new row
                 validated = self.schema.validate_row(new_row, allow_missing=True)

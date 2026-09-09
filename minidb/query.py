@@ -5,7 +5,7 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from .errors import InvalidQueryError, TableNotFoundError
+from .errors import ColumnNotFoundError, InvalidQueryError, TableNotFoundError
 from .parser import (
     Condition,
     CreateTableQuery,
@@ -217,7 +217,7 @@ class QueryExecutor:
                 col_name = prefixed
 
         if col_name not in row:
-            return False
+            raise ColumnNotFoundError(condition.column, condition.table_alias)
 
         value = row[col_name]
         cond_value = condition.value
@@ -360,9 +360,15 @@ class QueryExecutor:
                         if prefixed in row:
                             result[col_name] = row[prefixed]
                             continue
+                        if col_name in row:
+                            result[col_name] = row[col_name]
+                            continue
+                        raise ColumnNotFoundError(col_name, col.table_alias)
 
                     if col_name in row:
                         result[col_name] = row[col_name]
+                    else:
+                        raise ColumnNotFoundError(col_name, table_name)
 
             results.append(result)
 

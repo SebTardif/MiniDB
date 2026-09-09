@@ -3,7 +3,7 @@
 import pytest
 
 from minidb import Column, ColumnType, MiniDB
-from minidb.errors import SyntaxError_
+from minidb.errors import ColumnNotFoundError, SyntaxError_, TypeMismatchError
 
 
 class TestParserErrors:
@@ -66,6 +66,106 @@ class TestTypeValidation:
         with pytest.raises(DuplicateKeyError) as exc_info:
             db.execute('INSERT INTO t (id) VALUES (42)')
         assert '42' in str(exc_info.value)
+
+    def test_insert_type_mismatch(self):
+        """INSERT of a non-castable value raises TypeMismatchError."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, age INTEGER)')
+        with pytest.raises(TypeMismatchError):
+            db.execute("INSERT INTO t (id, age) VALUES (1, 'not-a-number')")
+
+    def test_update_type_mismatch(self):
+        """UPDATE of a non-castable value raises TypeMismatchError."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, age INTEGER)')
+        db.execute('INSERT INTO t (id, age) VALUES (1, 30)')
+        with pytest.raises(TypeMismatchError):
+            db.execute("UPDATE t SET age = 'not-a-number' WHERE id = 1")
+        results = db.query('SELECT age FROM t WHERE id = 1')
+        assert results[0]['age'] == 30
+
+
+class TestUnknownColumns:
+    """Unknown column names must raise ColumnNotFoundError."""
+
+    @pytest.fixture
+    def db(self):
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+        return db
+
+    def test_select_unknown_column(self, db):
+        """SELECT of a missing column raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT missing FROM users')
+
+    def test_where_unknown_column(self, db):
+        """WHERE on a missing column raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT * FROM users WHERE ghost = 1')
+
+    def test_update_unknown_column(self, db):
+        """UPDATE of a missing column raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.execute('UPDATE users SET ghost = 1')
+        results = db.query('SELECT id, name FROM users ORDER BY id')
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+        assert results[1]['id'] == 2
+        assert results[1]['name'] == 'Bob'
+
+    def test_select_star_still_works(self, db):
+        """SELECT * still returns every unprefixed column."""
+        results = db.query('SELECT * FROM users ORDER BY id')
+        assert len(results) == 2
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+        assert results[1]['id'] == 2
+        assert results[1]['name'] == 'Bob'
+
+    def test_select_qualified_column_single_table(self, db):
+        """Qualified users.id on a single-table scan falls back to the unprefixed key."""
+        results = db.query('SELECT users.id, users.name FROM users WHERE users.id = 1')
+        assert len(results) == 1
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+
+    def test_left_join_null_right_column_is_not_unknown(self, db):
+        """A NULL right-side column after LEFT JOIN is present, not missing."""
+        db.create_table(
+            'orders',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('user_id', ColumnType.INTEGER),
+                Column('product', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO orders (id, user_id, product) VALUES (1, 1, 'Widget')")
+
+        results = db.query("""
+            SELECT users.name, orders.product
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+        """)
+        by_name = {r['name']: r['product'] for r in results}
+        assert by_name['Alice'] == 'Widget'
+        assert by_name['Bob'] is None
+
+        matched = db.query("""
+            SELECT users.name
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+            WHERE orders.product = 'Widget'
+        """)
+        assert [r['name'] for r in matched] == ['Alice']
 
 
 class TestWhereClause:
