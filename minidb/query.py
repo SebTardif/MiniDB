@@ -73,6 +73,9 @@ class QueryExecutor:
             # Project columns
             result_rows = self._project_columns(indexed_rows, query.columns, query.table)
 
+        if query.distinct:
+            result_rows = self._deduplicate_rows(result_rows)
+
         # Apply ORDER BY
         if query.order_by:
             result_rows = self._execute_order_by(result_rows, query.order_by)
@@ -303,6 +306,17 @@ class QueryExecutor:
         regex_pattern += '$'
 
         return bool(re.match(regex_pattern, value, re.IGNORECASE))
+
+    def _deduplicate_rows(self, rows: list[Row]) -> list[Row]:
+        """Drop duplicate projected rows, keeping first-seen order."""
+        seen: set[tuple] = set()
+        unique: list[Row] = []
+        for row in rows:
+            key = tuple(row.items())
+            if key not in seen:
+                seen.add(key)
+                unique.append(row)
+        return unique
 
     def _has_aggregates(self, columns: list[SelectColumn]) -> bool:
         """Check if any column has an aggregate function."""

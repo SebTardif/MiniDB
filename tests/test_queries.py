@@ -468,3 +468,56 @@ class TestWhereClause:
         assert len(results) == 1
         assert results[0]['name'] == 'Alice'
         assert results[0]['age'] == 30
+
+
+class TestDistinct:
+    """Tests for SELECT DISTINCT."""
+
+    @pytest.fixture
+    def db(self):
+        """Two Alices and one Bob (same name/age projection for the Alices)."""
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+                Column('age', ColumnType.INTEGER),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (2, 'Alice', 30)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (3, 'Bob', 25)")
+        return db
+
+    def test_select_distinct_name(self, db):
+        """SELECT DISTINCT name drops the duplicate Alice."""
+        results = db.query('SELECT DISTINCT name FROM users')
+        assert [r['name'] for r in results] == ['Alice', 'Bob']
+
+    def test_select_distinct_star_same_projection(self, db):
+        """PK blocks identical full rows; DISTINCT on the shared name/age projection."""
+        results = db.query('SELECT DISTINCT name, age FROM users')
+        assert len(results) == 2
+        assert results[0] == {'name': 'Alice', 'age': 30}
+        assert results[1] == {'name': 'Bob', 'age': 25}
+
+    def test_select_distinct_star_identical_rows(self):
+        """SELECT DISTINCT * after two identical inserts (no PK)."""
+        db = MiniDB()
+        db.execute('CREATE TABLE dupes (name STRING, age INTEGER)')
+        db.execute("INSERT INTO dupes (name, age) VALUES ('Alice', 30)")
+        db.execute("INSERT INTO dupes (name, age) VALUES ('Alice', 30)")
+        results = db.query('SELECT DISTINCT * FROM dupes')
+        assert results == [{'name': 'Alice', 'age': 30}]
+
+    def test_select_without_distinct_keeps_duplicates(self, db):
+        """SELECT name without DISTINCT still returns both Alices."""
+        results = db.query('SELECT name FROM users')
+        assert [r['name'] for r in results] == ['Alice', 'Alice', 'Bob']
+
+    def test_select_distinct_limit_1(self, db):
+        """DISTINCT + LIMIT 1 returns one unique row."""
+        results = db.query('SELECT DISTINCT name FROM users LIMIT 1')
+        assert len(results) == 1
+        assert results[0]['name'] == 'Alice'

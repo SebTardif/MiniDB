@@ -86,6 +86,7 @@ class SelectQuery:
     group_by: list[str] = field(default_factory=list)
     limit: int | None = None
     joins: list[JoinClause] = field(default_factory=list)
+    distinct: bool = False
 
 
 @dataclass
@@ -175,6 +176,7 @@ class Lexer:
         'NULL': TokenType.NULL,
         'LIMIT': TokenType.LIMIT,
         'AS': TokenType.AS,
+        'DISTINCT': TokenType.DISTINCT,
     }
 
     def __init__(self, sql: str):
@@ -403,6 +405,11 @@ class Parser:
         """Parse a SELECT query."""
         self._expect(TokenType.SELECT)
 
+        distinct = False
+        if self._match(TokenType.DISTINCT):
+            self._advance()
+            distinct = True
+
         # Parse columns
         columns = self._parse_select_columns()
 
@@ -446,7 +453,14 @@ class Parser:
         self._expect_end()
 
         return SelectQuery(
-            columns=columns, table=table, where=where, order_by=order_by, group_by=group_by, limit=limit, joins=joins
+            columns=columns,
+            table=table,
+            where=where,
+            order_by=order_by,
+            group_by=group_by,
+            limit=limit,
+            joins=joins,
+            distinct=distinct,
         )
 
     def _parse_select_columns(self) -> list[SelectColumn]:

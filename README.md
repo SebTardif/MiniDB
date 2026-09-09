@@ -9,6 +9,7 @@ A miniature in-memory database with SQL-like query support, built from scratch u
 - **SQL-like Query Language**:
   - WHERE with AND/OR, NOT, parentheses, and comparisons (=, >, <, >=, <=, !=, LIKE, IN)
   - SELECT column aliases (`col AS alias`)
+  - SELECT DISTINCT
   - ORDER BY (ASC/DESC)
   - GROUP BY with aggregations
   - LIMIT clause
@@ -134,6 +135,8 @@ INSERT INTO table_name (col1, col2, col3) VALUES (1, 'value', 3.14)
 SELECT * FROM table_name
 SELECT col1, col2 FROM table_name
 SELECT col1 AS alias FROM table_name
+SELECT DISTINCT col1 FROM table_name
+SELECT DISTINCT col1, col2 FROM table_name
 SELECT col1, COUNT(*), AVG(col2) FROM table_name GROUP BY col1
 ```
 
@@ -278,7 +281,6 @@ Areas for improvement:
 - RIGHT JOIN
 - Subqueries
 - HAVING clause
-- DISTINCT
 - More aggregate functions
 - Query optimization
 - Concurrent access
