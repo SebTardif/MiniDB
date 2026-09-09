@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import Column, ColumnType, DuplicateKeyError, MiniDB
+from minidb import Column, ColumnNotFoundError, ColumnType, DuplicateKeyError, InvalidQueryError, MiniDB
 
 
 class TestCRUD:
@@ -55,6 +55,34 @@ class TestCRUD:
 
         with pytest.raises(DuplicateKeyError):
             db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Bob', 25, 45000.0, false)")
+
+    def test_insert_fewer_values_than_columns(self, db):
+        """Fewer VALUES than listed columns raises InvalidQueryError."""
+        with pytest.raises(InvalidQueryError, match=r'column count \(3\) does not match value count \(2\)'):
+            db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice')")
+        assert db.get_table('users').row_count == 0
+
+    def test_insert_more_values_than_columns(self, db):
+        """More VALUES than listed columns raises InvalidQueryError."""
+        with pytest.raises(InvalidQueryError, match=r'column count \(2\) does not match value count \(3\)'):
+            db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice', 99)")
+        assert db.get_table('users').row_count == 0
+
+    def test_insert_unknown_column(self, db):
+        """Unknown INSERT column name raises ColumnNotFoundError."""
+        with pytest.raises(ColumnNotFoundError):
+            db.execute("INSERT INTO users (id, nope) VALUES (1, 'x')")
+        assert db.get_table('users').row_count == 0
+
+    def test_insert_matching_column_list(self, db):
+        """A matching column and value list still inserts the row."""
+        row_id = db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+
+        assert row_id == 0
+        row = db.get_table('users').get_row_by_id(row_id)
+        assert row['id'] == 1
+        assert row['name'] == 'Alice'
+        assert row['age'] is None
 
     def test_select_all(self, db):
         """Test SELECT * behavior."""

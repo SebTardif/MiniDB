@@ -426,8 +426,16 @@ class QueryExecutor:
 
         table = self.tables[query.table]
 
-        # Build row from columns and values
-        row = dict(zip(query.columns, query.values, strict=False))
+        if len(query.columns) != len(query.values):
+            raise InvalidQueryError(
+                f'column count ({len(query.columns)}) does not match value count ({len(query.values)})'
+            )
+
+        for col in query.columns:
+            if not table.schema.has_column(col):
+                raise ColumnNotFoundError(col, query.table)
+
+        row = dict(zip(query.columns, query.values, strict=True))
 
         row_id = table.insert(row)
         return row_id
