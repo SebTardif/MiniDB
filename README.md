@@ -7,7 +7,8 @@ A miniature in-memory database with SQL-like query support, built from scratch u
 - **Typed Columns**: INTEGER, STRING, FLOAT, BOOLEAN
 - **CRUD Operations**: INSERT, SELECT, UPDATE, DELETE
 - **SQL-like Query Language**:
-  - WHERE with AND/OR comparisons (=, >, <, >=, <=, !=, LIKE, IN)
+  - WHERE with AND/OR, NOT, parentheses, and comparisons (=, >, <, >=, <=, !=, LIKE, IN)
+  - SELECT column aliases (`col AS alias`)
   - ORDER BY (ASC/DESC)
   - GROUP BY with aggregations
   - LIMIT clause
@@ -31,6 +32,9 @@ python main.py              # Run demo
 
 ## Quick Start
 
+`execute()` runs any statement and returns a row id, an affected-row count, or None.
+`query()` is SELECT-only and returns rows.
+
 ```python
 from minidb import MiniDB, Column, ColumnType
 
@@ -41,7 +45,7 @@ db = MiniDB()
 db.execute('''
     CREATE TABLE users (
         id INTEGER PRIMARY KEY,
-        name STRING,
+        name STRING NOT NULL,
         age INTEGER,
         salary FLOAT,
         active BOOLEAN
@@ -94,6 +98,12 @@ affected = db.execute("UPDATE users SET salary = 80000.0 WHERE id = 1")
 # DELETE
 affected = db.execute("DELETE FROM users WHERE active = false")
 
+# DROP TABLE (SQL or Python API)
+db.execute('CREATE TABLE scratch (id INTEGER PRIMARY KEY)')
+db.execute('DROP TABLE scratch')
+db.create_table('temp', [Column('id', ColumnType.INTEGER, primary_key=True)])
+db.drop_table('temp')
+
 # Persistence
 db.save('my_database.json')
 db = MiniDB.load('my_database.json')
@@ -106,7 +116,7 @@ db = MiniDB.load('my_database.json')
 ```sql
 CREATE TABLE table_name (
     column1 INTEGER PRIMARY KEY,
-    column2 STRING,
+    column2 STRING NOT NULL,
     column3 FLOAT,
     column4 BOOLEAN
 )
@@ -123,6 +133,7 @@ INSERT INTO table_name (col1, col2, col3) VALUES (1, 'value', 3.14)
 ```sql
 SELECT * FROM table_name
 SELECT col1, col2 FROM table_name
+SELECT col1 AS alias FROM table_name
 SELECT col1, COUNT(*), AVG(col2) FROM table_name GROUP BY col1
 ```
 
@@ -139,6 +150,8 @@ WHERE col LIKE 'pattern%'     -- % matches any sequence
 WHERE col IN (1, 2, 3)
 WHERE cond1 AND cond2
 WHERE cond1 OR cond2
+WHERE NOT col = value
+WHERE (cond1 OR cond2) AND cond3
 ```
 
 ### ORDER BY
@@ -178,6 +191,17 @@ UPDATE table_name SET col1 = value1, col2 = value2 WHERE condition
 
 ```sql
 DELETE FROM table_name WHERE condition
+```
+
+### DROP TABLE
+
+```sql
+DROP TABLE table_name
+```
+
+```python
+db.execute('DROP TABLE table_name')
+db.drop_table('table_name')
 ```
 
 ## Architecture
@@ -251,7 +275,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 Areas for improvement:
 
 - B-tree indexes for range queries
-- LEFT/RIGHT OUTER JOIN
+- RIGHT JOIN
 - Subqueries
 - HAVING clause
 - DISTINCT
