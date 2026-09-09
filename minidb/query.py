@@ -162,10 +162,14 @@ class QueryExecutor:
                             merged[f'{join.table}.{col}'] = val
                         new_rows.append((left_id, merged))
                 elif join.join_type == 'LEFT':
-                    # Left join: include left row with NULLs for right columns
-                    merged = dict(left_row)
+                    merged = {}
+                    for col, val in left_row.items():
+                        merged[col] = val
+                        if query.table:
+                            merged[f'{query.table}.{col}'] = val
                     for col in right_table.columns:
-                        merged[col] = None
+                        if col not in merged:
+                            merged[col] = None
                         merged[f'{join.table}.{col}'] = None
                     new_rows.append((left_id, merged))
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import Column, ColumnType, MiniDB
+from minidb import Column, ColumnType, MiniDB, TableNotFoundError
 
 
 class TestJoins:
@@ -141,3 +141,48 @@ class TestJoins:
         counts = {r['name']: r['COUNT(*)'] for r in results}
         assert counts['Alice'] == 2
         assert counts['Bob'] == 3
+
+    def test_left_join_includes_unmatched(self, db):
+        """LEFT JOIN keeps unmatched left rows with NULL right columns."""
+        results = db.query("""
+            SELECT users.id, users.name, orders.product
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+        """)
+
+        assert len(results) == 6  # 5 matched orders plus Charlie
+
+        charlie = [r for r in results if r['name'] == 'Charlie']
+        assert len(charlie) == 1
+        assert charlie[0]['id'] == 3
+        assert charlie[0]['product'] is None
+
+        alice = [r for r in results if r['name'] == 'Alice']
+        assert len(alice) == 2
+        assert {r['product'] for r in alice} == {'Widget', 'Gadget'}
+
+    def test_left_join_preserves_left_pk(self, db):
+        """LEFT JOIN must not overwrite the left table primary key with NULL."""
+        results = db.query("""
+            SELECT users.id, users.name
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+        """)
+
+        assert len(results) == 6
+        charlie = [r for r in results if r['name'] == 'Charlie']
+        assert len(charlie) == 1
+        assert charlie[0]['id'] == 3
+        assert charlie[0]['id'] is not None
+
+        ids_by_name = {}
+        for row in results:
+            ids_by_name.setdefault(row['name'], set()).add(row['id'])
+        assert ids_by_name['Alice'] == {1}
+        assert ids_by_name['Bob'] == {2}
+        assert ids_by_name['Charlie'] == {3}
+
+    def test_join_unknown_table(self, db):
+        """JOIN against a missing table raises TableNotFoundError."""
+        with pytest.raises(TableNotFoundError):
+            db.query('SELECT * FROM users JOIN ghost ON users.id = ghost.user_id')
