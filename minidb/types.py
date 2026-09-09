@@ -112,6 +112,7 @@ class TokenType(Enum):
     NULL = auto()
     NOT_NULL = auto()
     LIMIT = auto()
+    AS = auto()
 
     # Literals
     IDENTIFIER = auto()

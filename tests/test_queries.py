@@ -389,3 +389,35 @@ class TestWhereClause:
 
         assert len(results) == 1
         assert results[0]['name'] == 'Diana'
+
+    def test_select_column_as_alias(self, db):
+        """SELECT name AS n keys the result as n, not name."""
+        results = db.query('SELECT name AS n FROM users WHERE id = 1')
+
+        assert len(results) == 1
+        assert results[0]['n'] == 'Alice'
+        assert 'name' not in results[0]
+
+    def test_select_column_implicit_alias(self, db):
+        """SELECT name n also keys the result as n."""
+        results = db.query('SELECT name n FROM users WHERE id = 1')
+
+        assert len(results) == 1
+        assert results[0]['n'] == 'Alice'
+        assert 'name' not in results[0]
+
+    def test_select_count_as_alias(self, db):
+        """SELECT COUNT(*) AS cnt keys the aggregate as cnt."""
+        results = db.query('SELECT COUNT(*) AS cnt FROM users')
+
+        assert len(results) == 1
+        assert results[0]['cnt'] == 5
+        assert 'COUNT(*)' not in results[0]
+
+    def test_select_unaliased_columns(self, db):
+        """Unaliased SELECT still uses the column names."""
+        results = db.query('SELECT name, age FROM users WHERE id = 1')
+
+        assert len(results) == 1
+        assert results[0]['name'] == 'Alice'
+        assert results[0]['age'] == 30

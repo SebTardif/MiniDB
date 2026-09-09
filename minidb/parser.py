@@ -174,6 +174,7 @@ class Lexer:
         'KEY': TokenType.KEY,
         'NULL': TokenType.NULL,
         'LIMIT': TokenType.LIMIT,
+        'AS': TokenType.AS,
     }
 
     def __init__(self, sql: str):
@@ -481,12 +482,12 @@ class Parser:
             table_alias = col_name
             col_name = self._expect(TokenType.IDENTIFIER).value
 
-        # Check for alias (AS keyword)
         alias = None
-        if self._match(TokenType.IDENTIFIER) and self._current().value.upper() != 'FROM':
+        if self._match(TokenType.AS):
+            self._advance()
+            alias = self._expect(TokenType.IDENTIFIER).value
+        elif self._match(TokenType.IDENTIFIER):
             alias = self._advance().value
-        elif self._peek().type == TokenType.IDENTIFIER and self._peek().value.upper() == 'AS':
-            pass  # Skip AS keyword handling for now
 
         return SelectColumn(name=col_name, table_alias=table_alias, alias=alias)
 
@@ -509,15 +510,18 @@ class Parser:
 
         self._expect(TokenType.RPAREN)
 
-        # Check for alias
         alias = None
-        if self._match(TokenType.IDENTIFIER):
+        if self._match(TokenType.AS):
+            self._advance()
+            alias = self._expect(TokenType.IDENTIFIER).value
+        elif self._match(TokenType.IDENTIFIER):
             alias = self._advance().value
 
         return SelectColumn(
             name=col_name,
             table_alias=table_alias,
             aggregate=AggregateFunction(function=func_name, column=col_name, alias=alias),
+            alias=alias,
         )
 
     def _parse_join(self) -> JoinClause:

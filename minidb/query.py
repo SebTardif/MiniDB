@@ -357,20 +357,20 @@ class QueryExecutor:
                     # Aggregates handled separately
                     pass
                 else:
-                    # Get column value
                     col_name = col.name
+                    out_name = col.alias or col_name
                     if col.table_alias:
                         prefixed = f'{col.table_alias}.{col_name}'
                         if prefixed in row:
-                            result[col_name] = row[prefixed]
+                            result[out_name] = row[prefixed]
                             continue
                         if col_name in row:
-                            result[col_name] = row[col_name]
+                            result[out_name] = row[col_name]
                             continue
                         raise ColumnNotFoundError(col_name, col.table_alias)
 
                     if col_name in row:
-                        result[col_name] = row[col_name]
+                        result[out_name] = row[col_name]
                     else:
                         raise ColumnNotFoundError(col_name, table_name)
 
