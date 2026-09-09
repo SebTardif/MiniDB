@@ -147,6 +147,21 @@ class DropTableQuery:
     table: str
 
 
+@dataclass
+class BeginQuery:
+    """Represents a parsed BEGIN statement."""
+
+
+@dataclass
+class CommitQuery:
+    """Represents a parsed COMMIT statement."""
+
+
+@dataclass
+class RollbackQuery:
+    """Represents a parsed ROLLBACK statement."""
+
+
 class Lexer:
     """Tokenizes SQL queries."""
 
@@ -186,6 +201,9 @@ class Lexer:
         'AS': TokenType.AS,
         'DISTINCT': TokenType.DISTINCT,
         'HAVING': TokenType.HAVING,
+        'BEGIN': TokenType.BEGIN,
+        'COMMIT': TokenType.COMMIT,
+        'ROLLBACK': TokenType.ROLLBACK,
     }
 
     def __init__(self, sql: str):
@@ -360,7 +378,19 @@ class Parser:
         self.tokens = tokens
         self.pos = 0
 
-    def parse(self) -> SelectQuery | InsertQuery | UpdateQuery | DeleteQuery | CreateTableQuery | DropTableQuery:
+    def parse(
+        self,
+    ) -> (
+        SelectQuery
+        | InsertQuery
+        | UpdateQuery
+        | DeleteQuery
+        | CreateTableQuery
+        | DropTableQuery
+        | BeginQuery
+        | CommitQuery
+        | RollbackQuery
+    ):
         """Parse the token stream into a query object."""
         token = self._current()
 
@@ -376,6 +406,12 @@ class Parser:
             return self._parse_create()
         elif token.type == TokenType.DROP:
             return self._parse_drop()
+        elif token.type == TokenType.BEGIN:
+            return self._parse_begin()
+        elif token.type == TokenType.COMMIT:
+            return self._parse_commit()
+        elif token.type == TokenType.ROLLBACK:
+            return self._parse_rollback()
         else:
             raise SyntaxError_(f'Unexpected token: {token.value}', token.position)
 
@@ -935,8 +971,38 @@ class Parser:
 
         return DropTableQuery(table=table)
 
+    def _parse_begin(self) -> BeginQuery:
+        """Parse a BEGIN statement."""
+        self._expect(TokenType.BEGIN)
+        self._expect_end()
+        return BeginQuery()
 
-def parse_sql(sql: str) -> SelectQuery | InsertQuery | UpdateQuery | DeleteQuery | CreateTableQuery | DropTableQuery:
+    def _parse_commit(self) -> CommitQuery:
+        """Parse a COMMIT statement."""
+        self._expect(TokenType.COMMIT)
+        self._expect_end()
+        return CommitQuery()
+
+    def _parse_rollback(self) -> RollbackQuery:
+        """Parse a ROLLBACK statement."""
+        self._expect(TokenType.ROLLBACK)
+        self._expect_end()
+        return RollbackQuery()
+
+
+def parse_sql(
+    sql: str,
+) -> (
+    SelectQuery
+    | InsertQuery
+    | UpdateQuery
+    | DeleteQuery
+    | CreateTableQuery
+    | DropTableQuery
+    | BeginQuery
+    | CommitQuery
+    | RollbackQuery
+):
     """Parse a SQL string into a query object."""
     lexer = Lexer(sql)
     tokens = lexer.tokenize()
@@ -965,7 +1031,17 @@ def _count_where_placeholders(where: WhereClause | None) -> int:
 
 
 def _count_query_placeholders(
-    query: SelectQuery | InsertQuery | UpdateQuery | DeleteQuery | CreateTableQuery | DropTableQuery,
+    query: (
+        SelectQuery
+        | InsertQuery
+        | UpdateQuery
+        | DeleteQuery
+        | CreateTableQuery
+        | DropTableQuery
+        | BeginQuery
+        | CommitQuery
+        | RollbackQuery
+    ),
 ) -> int:
     if isinstance(query, InsertQuery):
         return sum(_count_placeholders_in_value(value) for value in query.values)
@@ -1001,7 +1077,17 @@ def _bind_where(where: WhereClause | None, params: list[Any], index: list[int]) 
 
 
 def bind_params(
-    query: SelectQuery | InsertQuery | UpdateQuery | DeleteQuery | CreateTableQuery | DropTableQuery,
+    query: (
+        SelectQuery
+        | InsertQuery
+        | UpdateQuery
+        | DeleteQuery
+        | CreateTableQuery
+        | DropTableQuery
+        | BeginQuery
+        | CommitQuery
+        | RollbackQuery
+    ),
     params: Sequence[Any] | None = None,
 ) -> None:
     """Replace ParamPlaceholder sentinels left-to-right with bound values."""

@@ -7,6 +7,7 @@ A miniature in-memory database with SQL-like query support, built from scratch u
 - **Typed Columns**: INTEGER, STRING, FLOAT, BOOLEAN
 - **CRUD Operations**: INSERT, SELECT, UPDATE, DELETE
 - **Parameters**: `?` placeholders bound after parse (`execute(sql, params)`)
+- **Transactions**: in-memory `BEGIN` / `COMMIT` / `ROLLBACK` snapshots
 - **SQL-like Query Language**:
   - WHERE with AND/OR, NOT, parentheses, comparisons (=, >, <, >=, <=, !=, LIKE, IN), and IS NULL / IS NOT NULL
   - SELECT column aliases (`col AS alias`)
@@ -112,6 +113,11 @@ affected = db.execute('UPDATE users SET salary = 80000.0 WHERE id = 1')
 
 # DELETE
 affected = db.execute('DELETE FROM users WHERE active = false')
+
+# Snapshot transaction (in-memory only)
+db.execute('BEGIN')
+db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (3, 'Cara', 40, 90000.0, true)")
+db.execute('ROLLBACK')
 
 # DROP TABLE (SQL or Python API)
 db.execute('CREATE TABLE scratch (id INTEGER PRIMARY KEY)')
@@ -230,6 +236,17 @@ UPDATE table_name SET col1 = value1, col2 = value2 WHERE condition
 DELETE FROM table_name WHERE condition
 ```
 
+### BEGIN / COMMIT / ROLLBACK
+
+```sql
+BEGIN
+COMMIT
+ROLLBACK
+```
+
+These copy the in-memory tables at `BEGIN` and restore that copy on `ROLLBACK`.
+They are not durable and not concurrent. MiniDB is single-threaded.
+
 ### DROP TABLE
 
 ```sql
@@ -275,7 +292,7 @@ python -m pytest tests/ -v --cov=minidb
 
 ### Test Categories
 
-- **test_database.py**: Database lifecycle, table management, and `?` parameters
+- **test_database.py**: Database lifecycle, table management, `?` parameters, and snapshot transactions
 - **test_crud.py**: INSERT, SELECT, UPDATE, DELETE operations
 - **test_queries.py**: WHERE, ORDER BY, LIMIT, parser errors, type validation
 - **test_aggregations.py**: COUNT, SUM, AVG, MIN, MAX, GROUP BY, HAVING
@@ -297,7 +314,7 @@ MiniDB is designed for small to medium datasets:
 
 - In-memory only (no disk-based storage during operation)
 - Single-threaded
-- No transactions
+- Transactions are in-memory snapshots only (not durable, not concurrent)
 - No foreign key constraints
 - Limited JOIN support (INNER and LEFT JOIN only, no RIGHT JOIN execution)
 

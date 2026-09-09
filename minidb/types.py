@@ -116,6 +116,9 @@ class TokenType(Enum):
     AS = auto()
     DISTINCT = auto()
     HAVING = auto()
+    BEGIN = auto()
+    COMMIT = auto()
+    ROLLBACK = auto()
 
     # Literals
     IDENTIFIER = auto()

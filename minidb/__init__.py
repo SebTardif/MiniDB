@@ -79,12 +79,15 @@ from .errors import (
 )
 from .index import HashIndex, IndexManager
 from .parser import (
+    BeginQuery,
+    CommitQuery,
     CreateTableQuery,
     DeleteQuery,
     DropTableQuery,
     InsertQuery,
     Lexer,
     Parser,
+    RollbackQuery,
     SelectQuery,
     Token,
     UpdateQuery,
@@ -99,6 +102,7 @@ from .types import ColumnType, QueryResult, QueryType, Row, TokenType
 
 __all__ = [
     'AmbiguousColumnError',
+    'BeginQuery',
     # Schema
     'Column',
     'ColumnError',
@@ -106,6 +110,7 @@ __all__ = [
     'ColumnNotFoundError',
     # Types
     'ColumnType',
+    'CommitQuery',
     'ConstraintError',
     'CreateTableQuery',
     'DeleteQuery',
@@ -136,6 +141,7 @@ __all__ = [
     'QueryPlanner',
     'QueryResult',
     'QueryType',
+    'RollbackQuery',
     'Row',
     'ScanType',
     'Schema',

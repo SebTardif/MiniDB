@@ -1,11 +1,21 @@
 """Main database API for MiniDB."""
 
+import copy
 from collections.abc import Sequence
 from typing import Any
 
 from .column import Column, Schema
-from .errors import MiniDBError, TableExistsError, TableNotFoundError
-from .parser import CreateTableQuery, DropTableQuery, SelectQuery, bind_params, parse_sql
+from .errors import InvalidQueryError, MiniDBError, TableExistsError, TableNotFoundError
+from .parser import (
+    BeginQuery,
+    CommitQuery,
+    CreateTableQuery,
+    DropTableQuery,
+    RollbackQuery,
+    SelectQuery,
+    bind_params,
+    parse_sql,
+)
 from .persistence import _deserialize, _serialize
 from .planner import QueryPlanner
 from .query import QueryExecutor
@@ -48,6 +58,7 @@ class MiniDB:
         """Initialize an empty database."""
         self._tables: dict[str, Table] = {}
         self._executor: QueryExecutor | None = None
+        self._txn_snapshot: dict[str, Table] | None = None
 
     @property
     def tables(self) -> list[str]:
@@ -115,12 +126,36 @@ class MiniDB:
             - For INSERT: row ID (int)
             - For UPDATE/DELETE: number of affected rows (int)
             - For CREATE/DROP TABLE: None
+            - For BEGIN/COMMIT/ROLLBACK: None
 
         Raises:
             MiniDBError: If query execution fails
         """
         query = parse_sql(sql)
         bind_params(query, params)
+
+        if isinstance(query, BeginQuery):
+            if self._txn_snapshot is not None:
+                raise InvalidQueryError('already in a transaction')
+            self._txn_snapshot = {
+                name: Table.from_dict(copy.deepcopy(table.to_dict())) for name, table in self._tables.items()
+            }
+            return None
+
+        if isinstance(query, CommitQuery):
+            if self._txn_snapshot is None:
+                raise InvalidQueryError('no transaction in progress')
+            self._txn_snapshot = None
+            self._executor = None
+            return None
+
+        if isinstance(query, RollbackQuery):
+            if self._txn_snapshot is None:
+                raise InvalidQueryError('no transaction in progress')
+            self._tables = self._txn_snapshot
+            self._txn_snapshot = None
+            self._executor = None
+            return None
 
         if isinstance(query, CreateTableQuery):
             columns = [

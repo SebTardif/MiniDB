@@ -285,3 +285,74 @@ class TestParameters:
         assert results[0]['name'] == payload
         assert 'users' in db
         assert db.get_table('users').row_count == 1
+
+
+class TestTransactions:
+    """Tests for in-memory snapshot BEGIN / COMMIT / ROLLBACK."""
+
+    @pytest.fixture
+    def db(self):
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        return db
+
+    def test_begin_insert_rollback_discards_insert(self, db):
+        """BEGIN, INSERT, ROLLBACK leaves the insert gone."""
+        db.execute('BEGIN')
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+        assert db.get_table('users').row_count == 2
+        db.execute('ROLLBACK')
+        results = db.query('SELECT id, name FROM users ORDER BY id')
+        assert [r['name'] for r in results] == ['Alice']
+
+    def test_begin_insert_commit_keeps_insert(self, db):
+        """BEGIN, INSERT, COMMIT leaves the insert in place."""
+        db.execute('BEGIN')
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+        db.execute('COMMIT')
+        results = db.query('SELECT id, name FROM users ORDER BY id')
+        assert [r['name'] for r in results] == ['Alice', 'Bob']
+
+    def test_commit_without_begin_raises(self, db):
+        """COMMIT without BEGIN raises InvalidQueryError."""
+        with pytest.raises(InvalidQueryError):
+            db.execute('COMMIT')
+
+    def test_rollback_without_begin_raises(self, db):
+        """ROLLBACK without BEGIN raises InvalidQueryError."""
+        with pytest.raises(InvalidQueryError):
+            db.execute('ROLLBACK')
+
+    def test_nested_begin_raises(self, db):
+        """BEGIN while already in a transaction raises InvalidQueryError."""
+        db.execute('BEGIN')
+        with pytest.raises(InvalidQueryError):
+            db.execute('BEGIN')
+        db.execute('ROLLBACK')
+
+    def test_begin_drop_table_rollback_restores_table(self, db):
+        """BEGIN, DROP TABLE, ROLLBACK restores the table and its rows."""
+        db.execute('BEGIN')
+        db.execute('DROP TABLE users')
+        assert 'users' not in db
+        db.execute('ROLLBACK')
+        assert 'users' in db
+        results = db.query('SELECT name FROM users')
+        assert [r['name'] for r in results] == ['Alice']
+
+    def test_begin_create_table_rollback_drops_table(self, db):
+        """BEGIN, CREATE TABLE, ROLLBACK removes the new table."""
+        db.execute('BEGIN')
+        db.execute('CREATE TABLE extra (id INTEGER PRIMARY KEY)')
+        assert 'extra' in db
+        db.execute('ROLLBACK')
+        assert 'extra' not in db
+
+    def test_begin_update_rollback_restores_values(self, db):
+        """BEGIN, UPDATE, ROLLBACK restores the old column values."""
+        db.execute('BEGIN')
+        db.execute("UPDATE users SET name = 'Alicia' WHERE id = 1")
+        assert db.query('SELECT name FROM users WHERE id = 1')[0]['name'] == 'Alicia'
+        db.execute('ROLLBACK')
+        assert db.query('SELECT name FROM users WHERE id = 1')[0]['name'] == 'Alice'
