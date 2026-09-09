@@ -232,7 +232,7 @@ class QueryExecutor:
             return None
 
         for cond in where.conditions:
-            if isinstance(cond, Condition) and cond.column == column:
+            if isinstance(cond, Condition) and cond.column == column and not cond.negated:
                 return cond
 
         return None

@@ -115,6 +115,8 @@ class QueryPlanner:
     def _check_condition_for_index(self, condition) -> tuple | None:
         """Check if a condition can use an index."""
         if isinstance(condition, Condition):
+            if condition.negated:
+                return None
             column = condition.column
             operator = condition.operator
             value = condition.value

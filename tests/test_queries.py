@@ -383,6 +383,16 @@ class TestWhereClause:
         names = {r['name'] for r in results}
         assert names == {'Alice', 'Bob', 'Diana'}
 
+    def test_where_not_primary_key(self, db):
+        """NOT on a PK must not plan the un-negated index lookup."""
+        results = db.query('SELECT name FROM users WHERE NOT id = 1')
+        names = {r['name'] for r in results}
+        assert names == {'Bob', 'Charlie', 'Diana', 'Eve'}
+
+        results = db.query('SELECT name FROM users WHERE NOT id > 1')
+        names = {r['name'] for r in results}
+        assert names == {'Alice'}
+
     def test_where_is_null(self):
         """WHERE age IS NULL matches a nullable missing age."""
         db = MiniDB()
