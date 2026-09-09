@@ -153,3 +153,32 @@ class TestDatabaseLifecycle:
         db = MiniDB()
         with pytest.raises(TableNotFoundError):
             db.query('SELECT * FROM ghost')
+
+
+class TestExplain:
+    """Tests for MiniDB.explain()."""
+
+    def test_explain_pk_equality_uses_index_scan(self):
+        """PK equality WHERE id = 1 plans an index_scan."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        plan = db.explain('SELECT * FROM users WHERE id = 1')
+        assert 'index_scan' in plan
+
+    def test_explain_unindexed_column_uses_table_scan(self):
+        """An unindexed column plans a table_scan."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        plan = db.explain("SELECT * FROM users WHERE name = 'Alice'")
+        assert 'table_scan' in plan
+
+    def test_explain_insert_raises(self):
+        """explain() is SELECT-only."""
+        from minidb.errors import MiniDBError
+
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        with pytest.raises(MiniDBError, match='SELECT-only'):
+            db.explain("INSERT INTO users (id, name) VALUES (2, 'Bob')")

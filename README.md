@@ -16,7 +16,7 @@ A miniature in-memory database with SQL-like query support, built from scratch u
 - **Aggregations**: COUNT, SUM, AVG, MIN, MAX
 - **JOINs**: INNER JOIN and LEFT JOIN between tables
 - **Indexing**: Automatic hash-based indexing on primary keys
-- **Query Planner**: Chooses between index scans and table scans
+- **Query Planner**: Chooses between index scans and table scans (`db.explain(sql)`)
 - **Persistence**: Save/load database to JSON files with versioning
 
 ## Installation
@@ -74,6 +74,9 @@ results = db.query('''
     WHERE active = true AND salary > 60000
     ORDER BY salary DESC
 ''')
+
+# Inspect the SELECT plan (index_scan vs table_scan)
+print(db.explain('SELECT * FROM users WHERE id = 1'))
 
 # Aggregations
 results = db.query("SELECT COUNT(*), AVG(salary) FROM users")
