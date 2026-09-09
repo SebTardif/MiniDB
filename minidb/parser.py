@@ -391,6 +391,14 @@ class Parser:
         """Check if current token matches any of the given types."""
         return self._current().type in token_types
 
+    def _expect_end(self) -> None:
+        """Consume an optional semicolon, then require end of input."""
+        if self._match(TokenType.SEMICOLON):
+            self._advance()
+        token = self._current()
+        if token.type != TokenType.EOF:
+            raise SyntaxError_(f'Unexpected token: {token.value}', token.position)
+
     def _parse_select(self) -> SelectQuery:
         """Parse a SELECT query."""
         self._expect(TokenType.SELECT)
@@ -435,9 +443,7 @@ class Parser:
             limit_token = self._expect(TokenType.INTEGER_LITERAL)
             limit = limit_token.value
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return SelectQuery(
             columns=columns, table=table, where=where, order_by=order_by, group_by=group_by, limit=limit, joins=joins
@@ -748,9 +754,7 @@ class Parser:
             self._advance()
         self._expect(TokenType.RPAREN)
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return InsertQuery(table=table, columns=columns, values=values)
 
@@ -778,9 +782,7 @@ class Parser:
             self._advance()
             where = self._parse_where()
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return UpdateQuery(table=table, set_clause=set_clause, where=where)
 
@@ -797,9 +799,7 @@ class Parser:
             self._advance()
             where = self._parse_where()
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return DeleteQuery(table=table, where=where)
 
@@ -822,9 +822,7 @@ class Parser:
             self._advance()
         self._expect(TokenType.RPAREN)
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return CreateTableQuery(table=table, columns=columns)
 
@@ -862,9 +860,7 @@ class Parser:
 
         table = self._expect(TokenType.IDENTIFIER).value
 
-        # Optional semicolon
-        if self._match(TokenType.SEMICOLON):
-            self._advance()
+        self._expect_end()
 
         return DropTableQuery(table=table)
 

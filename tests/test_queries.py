@@ -34,6 +34,53 @@ class TestParserErrors:
         with pytest.raises(SyntaxError_):
             db.execute('')
 
+    def test_having_after_select_is_rejected(self):
+        """HAVING is not supported and leftover tokens must not be ignored."""
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Alice')")
+        with pytest.raises(SyntaxError_):
+            db.query('SELECT * FROM users HAVING COUNT(*) > 1')
+        with pytest.raises(SyntaxError_):
+            db.query('SELECT * FROM users GROUP BY name HAVING COUNT(*) > 1')
+
+    def test_offset_after_select_is_rejected(self):
+        """OFFSET is leftover syntax and must raise SyntaxError_."""
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        with pytest.raises(SyntaxError_):
+            db.query('SELECT * FROM users OFFSET 1')
+
+    def test_optional_semicolon_still_works(self):
+        """A trailing semicolon is still accepted."""
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice');")
+        results = db.query('SELECT * FROM users;')
+        assert len(results) == 1
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+
 
 class TestTypeValidation:
     """Tests for type validation and NULL constraint errors."""
