@@ -260,6 +260,20 @@ class TestWhereClause:
         assert 'Charlie' in names
         assert 'Eve' in names
 
+    def test_where_and_binds_tighter_than_or(self, db):
+        """AND binds tighter than OR: age < 26 OR (age > 32 AND active)."""
+        results = db.query('SELECT * FROM users WHERE age < 26 OR age > 32 AND active = true')
+
+        names = {r['name'] for r in results}
+        assert names == {'Bob', 'Charlie'}
+
+    def test_where_parentheses(self, db):
+        """Parentheses override precedence: (age < 26 OR age > 32) AND active."""
+        results = db.query('SELECT * FROM users WHERE (age < 26 OR age > 32) AND active = true')
+
+        names = {r['name'] for r in results}
+        assert names == {'Charlie'}
+
     def test_where_like_prefix(self, db):
         """Test WHERE with LIKE pattern matching (prefix)."""
         results = db.query("SELECT * FROM users WHERE name LIKE 'A%'")

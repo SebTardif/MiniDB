@@ -564,19 +564,39 @@ class Parser:
         )
 
     def _parse_where(self) -> WhereClause:
-        """Parse a WHERE clause."""
-        conditions = [self._parse_condition()]
-        operator = 'AND'
+        """Parse a WHERE clause with AND binding tighter than OR."""
+        return self._parse_or()
 
-        while self._match(TokenType.AND, TokenType.OR):
-            if self._current().type == TokenType.AND:
-                operator = 'AND'
-            else:
-                operator = 'OR'
+    def _parse_or(self) -> WhereClause:
+        """Parse OR-separated AND groups."""
+        conditions = [self._parse_and()]
+        while self._match(TokenType.OR):
             self._advance()
-            conditions.append(self._parse_condition())
+            conditions.append(self._parse_and())
+        if len(conditions) == 1:
+            if isinstance(conditions[0], WhereClause):
+                return conditions[0]
+            return WhereClause(conditions=conditions, operator='AND')
+        return WhereClause(conditions=conditions, operator='OR')
 
-        return WhereClause(conditions=conditions, operator=operator)
+    def _parse_and(self) -> Condition | WhereClause:
+        """Parse AND-separated predicates."""
+        conditions = [self._parse_predicate()]
+        while self._match(TokenType.AND):
+            self._advance()
+            conditions.append(self._parse_predicate())
+        if len(conditions) == 1:
+            return conditions[0]
+        return WhereClause(conditions=conditions, operator='AND')
+
+    def _parse_predicate(self) -> Condition | WhereClause:
+        """Parse a parenthesized clause or a single condition."""
+        if self._match(TokenType.LPAREN):
+            self._advance()
+            clause = self._parse_or()
+            self._expect(TokenType.RPAREN)
+            return clause
+        return self._parse_condition()
 
     def _parse_condition(self) -> Condition:
         """Parse a single condition."""
