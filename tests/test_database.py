@@ -195,3 +195,93 @@ class TestExplain:
         db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
         with pytest.raises(MiniDBError, match='SELECT-only'):
             db.explain("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+
+    def test_explain_binds_params_before_planning(self):
+        """explain() binds ? so a parameterized PK lookup still plans an index_scan."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        plan = db.explain('SELECT * FROM users WHERE id = ?', [1])
+        assert 'index_scan' in plan
+
+
+class TestParameters:
+    """Tests for ? placeholders bound after parse."""
+
+    @pytest.fixture
+    def db(self):
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        return db
+
+    def test_insert_with_placeholders(self, db):
+        """INSERT binds one ? per value."""
+        row_id = db.execute('INSERT INTO users (id, name, age) VALUES (?, ?, ?)', [1, 'Alice', 30])
+        assert row_id == 0
+        results = db.query('SELECT * FROM users')
+        assert len(results) == 1
+        assert results[0]['id'] == 1
+        assert results[0]['name'] == 'Alice'
+        assert results[0]['age'] == 30
+
+    def test_select_where_id_param(self, db):
+        """SELECT WHERE id = ? binds the id."""
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25)")
+        results = db.query('SELECT name FROM users WHERE id = ?', [2])
+        assert len(results) == 1
+        assert results[0]['name'] == 'Bob'
+
+    def test_select_where_name_param(self, db):
+        """SELECT WHERE name = ? binds the name."""
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25)")
+        results = db.query('SELECT id FROM users WHERE name = ?', ['Alice'])
+        assert len(results) == 1
+        assert results[0]['id'] == 1
+
+    def test_update_set_and_where_params(self, db):
+        """UPDATE SET name = ? WHERE id = ? binds SET then WHERE."""
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+        affected = db.execute('UPDATE users SET name = ? WHERE id = ?', ['Alicia', 1])
+        assert affected == 1
+        results = db.query('SELECT name FROM users WHERE id = 1')
+        assert results[0]['name'] == 'Alicia'
+
+    def test_in_placeholders(self, db):
+        """WHERE id IN (?, ?) binds both list values."""
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 35)")
+        results = db.query('SELECT name FROM users WHERE id IN (?, ?) ORDER BY name', [1, 3])
+        assert [r['name'] for r in results] == ['Alice', 'Charlie']
+
+    def test_too_few_params(self, db):
+        """Fewer params than placeholders raises InvalidQueryError."""
+        with pytest.raises(InvalidQueryError, match=r'expected 3 parameters, got 1'):
+            db.execute('INSERT INTO users (id, name, age) VALUES (?, ?, ?)', [1])
+
+    def test_too_many_params(self, db):
+        """More params than placeholders raises InvalidQueryError."""
+        with pytest.raises(InvalidQueryError, match=r'expected 2 parameters, got 3'):
+            db.execute('INSERT INTO users (id, name) VALUES (?, ?)', [1, 'Alice', 99])
+
+    def test_params_on_literal_query(self, db):
+        """Params supplied to a statement with no ? raise InvalidQueryError."""
+        with pytest.raises(InvalidQueryError, match=r'expected 0 parameters, got 1'):
+            db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')", [1])
+
+    def test_execute_without_params_still_works(self, db):
+        """Existing no-params execute and query still work."""
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+        results = db.query('SELECT name FROM users WHERE id = 1')
+        assert results[0]['name'] == 'Alice'
+
+    def test_placeholder_is_bound_not_interpolated(self, db):
+        """A value that looks like SQL is stored as a string, not executed."""
+        payload = "'; DROP TABLE users; --"
+        db.execute('INSERT INTO users (id, name, age) VALUES (?, ?, ?)', [1, payload, 30])
+        results = db.query('SELECT name FROM users WHERE id = ?', [1])
+        assert results[0]['name'] == payload
+        assert 'users' in db
+        assert db.get_table('users').row_count == 1

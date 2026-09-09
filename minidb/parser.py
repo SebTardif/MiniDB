@@ -1,9 +1,10 @@
 """SQL parser for MiniDB."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from .errors import SyntaxError_
+from .errors import InvalidQueryError, SyntaxError_
 from .types import ColumnType, TokenType
 
 
@@ -14,6 +15,11 @@ class Token:
     type: TokenType
     value: Any
     position: int
+
+
+@dataclass
+class ParamPlaceholder:
+    """Sentinel for a ? parameter that is bound after parse."""
 
 
 @dataclass
@@ -246,6 +252,9 @@ class Lexer:
                 self.pos += 1
             elif char == '*':
                 self.tokens.append(Token(TokenType.STAR, '*', self.pos))
+                self.pos += 1
+            elif char == '?':
+                self.tokens.append(Token(TokenType.PLACEHOLDER, '?', self.pos))
                 self.pos += 1
             else:
                 raise SyntaxError_(f"Unexpected character: '{char}'", self.pos)
@@ -745,6 +754,9 @@ class Parser:
         elif token.type == TokenType.NULL:
             self._advance()
             return None
+        elif token.type == TokenType.PLACEHOLDER:
+            self._advance()
+            return ParamPlaceholder()
         else:
             raise SyntaxError_(f'Expected literal value, got {token.type.name}', token.position)
 
@@ -930,3 +942,83 @@ def parse_sql(sql: str) -> SelectQuery | InsertQuery | UpdateQuery | DeleteQuery
     tokens = lexer.tokenize()
     parser = Parser(tokens)
     return parser.parse()
+
+
+def _count_placeholders_in_value(value: Any) -> int:
+    if isinstance(value, ParamPlaceholder):
+        return 1
+    if isinstance(value, list):
+        return sum(_count_placeholders_in_value(item) for item in value)
+    return 0
+
+
+def _count_where_placeholders(where: WhereClause | None) -> int:
+    if where is None:
+        return 0
+    total = 0
+    for cond in where.conditions:
+        if isinstance(cond, Condition):
+            total += _count_placeholders_in_value(cond.value)
+        elif isinstance(cond, WhereClause):
+            total += _count_where_placeholders(cond)
+    return total
+
+
+def _count_query_placeholders(
+    query: SelectQuery | InsertQuery | UpdateQuery | DeleteQuery | CreateTableQuery | DropTableQuery,
+) -> int:
+    if isinstance(query, InsertQuery):
+        return sum(_count_placeholders_in_value(value) for value in query.values)
+    if isinstance(query, UpdateQuery):
+        return sum(
+            _count_placeholders_in_value(value) for value in query.set_clause.values()
+        ) + _count_where_placeholders(query.where)
+    if isinstance(query, DeleteQuery):
+        return _count_where_placeholders(query.where)
+    if isinstance(query, SelectQuery):
+        return _count_where_placeholders(query.where) + _count_where_placeholders(query.having)
+    return 0
+
+
+def _bind_value(value: Any, params: list[Any], index: list[int]) -> Any:
+    if isinstance(value, ParamPlaceholder):
+        bound = params[index[0]]
+        index[0] += 1
+        return bound
+    if isinstance(value, list):
+        return [_bind_value(item, params, index) for item in value]
+    return value
+
+
+def _bind_where(where: WhereClause | None, params: list[Any], index: list[int]) -> None:
+    if where is None:
+        return
+    for cond in where.conditions:
+        if isinstance(cond, Condition):
+            cond.value = _bind_value(cond.value, params, index)
+        elif isinstance(cond, WhereClause):
+            _bind_where(cond, params, index)
+
+
+def bind_params(
+    query: SelectQuery | InsertQuery | UpdateQuery | DeleteQuery | CreateTableQuery | DropTableQuery,
+    params: Sequence[Any] | None = None,
+) -> None:
+    """Replace ParamPlaceholder sentinels left-to-right with bound values."""
+    values = list(params) if params is not None else []
+    expected = _count_query_placeholders(query)
+    if expected != len(values):
+        raise InvalidQueryError(f'expected {expected} parameters, got {len(values)}')
+
+    index = [0]
+    if isinstance(query, InsertQuery):
+        query.values = [_bind_value(value, values, index) for value in query.values]
+    elif isinstance(query, UpdateQuery):
+        for key in query.set_clause:
+            query.set_clause[key] = _bind_value(query.set_clause[key], values, index)
+        _bind_where(query.where, values, index)
+    elif isinstance(query, DeleteQuery):
+        _bind_where(query.where, values, index)
+    elif isinstance(query, SelectQuery):
+        _bind_where(query.where, values, index)
+        _bind_where(query.having, values, index)

@@ -1,8 +1,11 @@
 """Main database API for MiniDB."""
 
+from collections.abc import Sequence
+from typing import Any
+
 from .column import Column, Schema
 from .errors import MiniDBError, TableExistsError, TableNotFoundError
-from .parser import CreateTableQuery, DropTableQuery, SelectQuery, parse_sql
+from .parser import CreateTableQuery, DropTableQuery, SelectQuery, bind_params, parse_sql
 from .persistence import _deserialize, _serialize
 from .planner import QueryPlanner
 from .query import QueryExecutor
@@ -99,12 +102,13 @@ class MiniDB:
         """Get a table by name."""
         return self._tables.get(name)
 
-    def execute(self, sql: str) -> QueryResult:
+    def execute(self, sql: str, params: Sequence[Any] | None = None) -> QueryResult:
         """
         Execute a SQL statement.
 
         Args:
             sql: SQL statement string
+            params: Values for ? placeholders, bound left-to-right after parse
 
         Returns:
             - For SELECT: list of row dictionaries
@@ -116,6 +120,7 @@ class MiniDB:
             MiniDBError: If query execution fails
         """
         query = parse_sql(sql)
+        bind_params(query, params)
 
         if isinstance(query, CreateTableQuery):
             columns = [
@@ -132,12 +137,13 @@ class MiniDB:
         else:
             return self.executor.execute(query)
 
-    def query(self, sql: str) -> list[Row]:
+    def query(self, sql: str, params: Sequence[Any] | None = None) -> list[Row]:
         """
         Execute a SELECT query and return results.
 
         Args:
             sql: SELECT statement
+            params: Values for ? placeholders, bound left-to-right after parse
 
         Returns:
             List of row dictionaries
@@ -145,17 +151,18 @@ class MiniDB:
         Raises:
             MiniDBError: If the statement is not SELECT or execution fails
         """
-        result = self.execute(sql)
+        result = self.execute(sql, params)
         if isinstance(result, list):
             return result
         raise MiniDBError('query() only runs SELECT; use execute() for INSERT, UPDATE, DELETE, CREATE, or DROP')
 
-    def explain(self, sql: str) -> str:
+    def explain(self, sql: str, params: Sequence[Any] | None = None) -> str:
         """
         Return the query plan for a SELECT statement.
 
         Args:
             sql: SELECT statement
+            params: Values for ? placeholders, bound before planning
 
         Returns:
             String representation of the planned scan
@@ -165,6 +172,7 @@ class MiniDB:
             TableNotFoundError: If the FROM table does not exist
         """
         query = parse_sql(sql)
+        bind_params(query, params)
         if not isinstance(query, SelectQuery):
             raise MiniDBError('explain() is SELECT-only')
         if query.table not in self._tables:

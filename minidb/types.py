@@ -139,6 +139,7 @@ class TokenType(Enum):
     RPAREN = auto()
     SEMICOLON = auto()
     STAR = auto()
+    PLACEHOLDER = auto()
 
     # Special
     EOF = auto()

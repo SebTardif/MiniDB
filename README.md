@@ -6,6 +6,7 @@ A miniature in-memory database with SQL-like query support, built from scratch u
 
 - **Typed Columns**: INTEGER, STRING, FLOAT, BOOLEAN
 - **CRUD Operations**: INSERT, SELECT, UPDATE, DELETE
+- **Parameters**: `?` placeholders bound after parse (`execute(sql, params)`)
 - **SQL-like Query Language**:
   - WHERE with AND/OR, NOT, parentheses, comparisons (=, >, <, >=, <=, !=, LIKE, IN), and IS NULL / IS NOT NULL
   - SELECT column aliases (`col AS alias`)
@@ -36,6 +37,8 @@ python main.py              # Run demo
 
 `execute()` runs any statement and returns a row id, an affected-row count, or None.
 `query()` is SELECT-only and returns rows.
+Both accept an optional `params` sequence for `?` placeholders. Values are bound
+after parse, not interpolated into the SQL string.
 
 ```python
 from minidb import MiniDB, Column, ColumnType
@@ -67,10 +70,13 @@ db.create_table(
 
 # Insert data
 db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 75000.0, true)")
-db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (2, 'Bob', 25, 55000.0, false)")
+db.execute(
+    'INSERT INTO users (id, name, age, salary, active) VALUES (?, ?, ?, ?, ?)',
+    [2, 'Bob', 25, 55000.0, False],
+)
 
 # Query data
-results = db.query('SELECT * FROM users WHERE age > 28')
+results = db.query('SELECT * FROM users WHERE age > ?', [28])
 
 # Complex queries
 results = db.query("""
@@ -135,7 +141,11 @@ CREATE TABLE table_name (
 
 ```sql
 INSERT INTO table_name (col1, col2, col3) VALUES (1, 'value', 3.14)
+INSERT INTO table_name (col1, col2, col3) VALUES (?, ?, ?)
 ```
+
+Use `db.execute(sql, [1, 'value', 3.14])` or `db.query(sql, params)` to bind `?`
+left-to-right. Too few or too many params raise `InvalidQueryError`.
 
 ### SELECT
 
@@ -171,6 +181,8 @@ WHERE col <= value
 WHERE col != value
 WHERE col LIKE 'pattern%'     -- % matches any sequence
 WHERE col IN (1, 2, 3)
+WHERE col = ?
+WHERE col IN (?, ?)
 WHERE col IS NULL
 WHERE col IS NOT NULL
 WHERE cond1 AND cond2
@@ -263,7 +275,7 @@ python -m pytest tests/ -v --cov=minidb
 
 ### Test Categories
 
-- **test_database.py**: Database lifecycle and table management
+- **test_database.py**: Database lifecycle, table management, and `?` parameters
 - **test_crud.py**: INSERT, SELECT, UPDATE, DELETE operations
 - **test_queries.py**: WHERE, ORDER BY, LIMIT, parser errors, type validation
 - **test_aggregations.py**: COUNT, SUM, AVG, MIN, MAX, GROUP BY, HAVING
