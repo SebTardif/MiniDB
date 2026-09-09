@@ -115,6 +115,7 @@ class TokenType(Enum):
     LIMIT = auto()
     AS = auto()
     DISTINCT = auto()
+    HAVING = auto()
 
     # Literals
     IDENTIFIER = auto()

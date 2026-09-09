@@ -12,6 +12,7 @@ A miniature in-memory database with SQL-like query support, built from scratch u
   - SELECT DISTINCT
   - ORDER BY (ASC/DESC)
   - GROUP BY with aggregations
+  - HAVING after GROUP BY
   - LIMIT clause
 - **Aggregations**: COUNT, SUM, AVG, MIN, MAX
 - **JOINs**: INNER JOIN and LEFT JOIN between tables
@@ -84,11 +85,12 @@ print(db.explain('SELECT * FROM users WHERE id = 1'))
 # Aggregations
 results = db.query('SELECT COUNT(*), AVG(salary) FROM users')
 
-# GROUP BY
+# GROUP BY with HAVING
 results = db.query("""
     SELECT active, COUNT(*), AVG(salary)
     FROM users
     GROUP BY active
+    HAVING COUNT(*) > 1
 """)
 
 # JOINs
@@ -144,7 +146,19 @@ SELECT col1 AS alias FROM table_name
 SELECT DISTINCT col1 FROM table_name
 SELECT DISTINCT col1, col2 FROM table_name
 SELECT col1, COUNT(*), AVG(col2) FROM table_name GROUP BY col1
+SELECT col1, COUNT(*) FROM table_name GROUP BY col1 HAVING COUNT(*) > 1
+SELECT col1, COUNT(*) AS n FROM table_name GROUP BY col1 HAVING n > 1
 ```
+
+### HAVING
+
+```sql
+HAVING COUNT(*) > 1
+HAVING SUM(quantity) > 30
+HAVING n > 2
+```
+
+HAVING filters grouped rows after GROUP BY (or the single row from an ungrouped aggregate). It is rejected when the SELECT has neither GROUP BY nor aggregate functions.
 
 ### WHERE Clause
 
@@ -252,7 +266,7 @@ python -m pytest tests/ -v --cov=minidb
 - **test_database.py**: Database lifecycle and table management
 - **test_crud.py**: INSERT, SELECT, UPDATE, DELETE operations
 - **test_queries.py**: WHERE, ORDER BY, LIMIT, parser errors, type validation
-- **test_aggregations.py**: COUNT, SUM, AVG, MIN, MAX, GROUP BY
+- **test_aggregations.py**: COUNT, SUM, AVG, MIN, MAX, GROUP BY, HAVING
 - **test_joins.py**: JOIN operations
 - **test_index.py**: Indexing and query planning
 - **test_persistence.py**: Save/load functionality
@@ -288,7 +302,6 @@ Areas for improvement:
 - B-tree indexes for range queries
 - RIGHT JOIN
 - Subqueries
-- HAVING clause
 - More aggregate functions
 - Query optimization
 - Concurrent access

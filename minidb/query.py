@@ -73,6 +73,11 @@ class QueryExecutor:
             # Project columns
             result_rows = self._project_columns(indexed_rows, query.columns, query.table)
 
+        if query.having:
+            if not query.group_by and not self._has_aggregates(query.columns):
+                raise InvalidQueryError('HAVING requires GROUP BY or aggregate functions')
+            result_rows = [row for row in result_rows if self._evaluate_where(row, query.having)]
+
         if query.distinct:
             result_rows = self._deduplicate_rows(result_rows)
 

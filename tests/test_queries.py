@@ -3,7 +3,7 @@
 import pytest
 
 from minidb import Column, ColumnType, MiniDB
-from minidb.errors import ColumnNotFoundError, SyntaxError_, TypeMismatchError
+from minidb.errors import ColumnNotFoundError, InvalidQueryError, SyntaxError_, TypeMismatchError
 
 
 class TestParserErrors:
@@ -35,7 +35,7 @@ class TestParserErrors:
             db.execute('')
 
     def test_having_after_select_is_rejected(self):
-        """HAVING is not supported and leftover tokens must not be ignored."""
+        """HAVING without GROUP BY or SELECT aggregates raises InvalidQueryError."""
         db = MiniDB()
         db.create_table(
             'users',
@@ -46,10 +46,8 @@ class TestParserErrors:
         )
         db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
         db.execute("INSERT INTO users (id, name) VALUES (2, 'Alice')")
-        with pytest.raises(SyntaxError_):
+        with pytest.raises(InvalidQueryError):
             db.query('SELECT * FROM users HAVING COUNT(*) > 1')
-        with pytest.raises(SyntaxError_):
-            db.query('SELECT * FROM users GROUP BY name HAVING COUNT(*) > 1')
 
     def test_offset_after_select_is_rejected(self):
         """OFFSET is leftover syntax and must raise SyntaxError_."""

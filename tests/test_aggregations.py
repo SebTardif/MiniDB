@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import Column, ColumnNotFoundError, ColumnType, MiniDB
+from minidb import Column, ColumnNotFoundError, ColumnType, InvalidQueryError, MiniDB
 
 
 class TestAggregations:
@@ -164,3 +164,79 @@ class TestAggregations:
         db.execute('CREATE TABLE empty (id INTEGER PRIMARY KEY)')
         with pytest.raises(ColumnNotFoundError):
             db.query('SELECT SUM(missing) FROM empty')
+
+    def test_group_by_having_count(self, db):
+        """HAVING COUNT(*) > 2 keeps both categories (A and B each have 3)."""
+        results = db.query('SELECT category, COUNT(*) FROM sales GROUP BY category HAVING COUNT(*) > 2')
+
+        assert len(results) == 2
+        cat_counts = {r['category']: r['COUNT(*)'] for r in results}
+        assert cat_counts['A'] == 3
+        assert cat_counts['B'] == 3
+
+    def test_group_by_having_sum(self, db):
+        """HAVING SUM(quantity) > 30 keeps only category B (sum 47)."""
+        results = db.query('SELECT category, SUM(quantity) FROM sales GROUP BY category HAVING SUM(quantity) > 30')
+
+        assert len(results) == 1
+        assert results[0]['category'] == 'B'
+        assert results[0]['SUM(quantity)'] == 47
+
+    def test_group_by_having_alias(self, db):
+        """HAVING can filter on a SELECT aggregate alias."""
+        results = db.query('SELECT category, COUNT(*) AS n FROM sales GROUP BY category HAVING n > 2')
+
+        assert len(results) == 2
+        cat_counts = {r['category']: r['n'] for r in results}
+        assert cat_counts['A'] == 3
+        assert cat_counts['B'] == 3
+
+    def test_having_after_where(self, db):
+        """HAVING filters groups after WHERE has already dropped rows."""
+        results = db.query("""
+            SELECT category, COUNT(*)
+            FROM sales
+            WHERE quantity >= 10
+            GROUP BY category
+            HAVING COUNT(*) > 1
+        """)
+
+        assert len(results) == 1
+        assert results[0]['category'] == 'B'
+        assert results[0]['COUNT(*)'] == 3
+
+    def test_having_ungrouped_aggregate(self, db):
+        """HAVING applies to the single ungrouped aggregate row."""
+        kept = db.query('SELECT COUNT(*) FROM sales HAVING COUNT(*) > 1')
+        assert len(kept) == 1
+        assert kept[0]['COUNT(*)'] == 6
+
+        dropped = db.query('SELECT COUNT(*) FROM sales HAVING COUNT(*) > 10')
+        assert dropped == []
+
+    def test_having_without_group_by_or_aggregates(self, db):
+        """HAVING without GROUP BY or SELECT aggregates raises InvalidQueryError."""
+        with pytest.raises(InvalidQueryError):
+            db.query('SELECT * FROM sales HAVING COUNT(*) > 1')
+        with pytest.raises(InvalidQueryError):
+            db.query("SELECT category FROM sales HAVING category = 'A'")
+
+    def test_group_by_name_having_count(self):
+        """GROUP BY name HAVING COUNT(*) > 1 keeps the duplicated name."""
+        db = MiniDB()
+        db.create_table(
+            'users',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+            ],
+        )
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Alice')")
+        db.execute("INSERT INTO users (id, name) VALUES (3, 'Bob')")
+
+        results = db.query('SELECT name, COUNT(*) FROM users GROUP BY name HAVING COUNT(*) > 1')
+
+        assert len(results) == 1
+        assert results[0]['name'] == 'Alice'
+        assert results[0]['COUNT(*)'] == 2

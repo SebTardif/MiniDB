@@ -84,6 +84,7 @@ class SelectQuery:
     where: WhereClause | None = None
     order_by: list[OrderByItem] = field(default_factory=list)
     group_by: list[str] = field(default_factory=list)
+    having: WhereClause | None = None
     limit: int | None = None
     joins: list[JoinClause] = field(default_factory=list)
     distinct: bool = False
@@ -178,6 +179,7 @@ class Lexer:
         'LIMIT': TokenType.LIMIT,
         'AS': TokenType.AS,
         'DISTINCT': TokenType.DISTINCT,
+        'HAVING': TokenType.HAVING,
     }
 
     def __init__(self, sql: str):
@@ -437,6 +439,12 @@ class Parser:
             self._expect(TokenType.BY)
             group_by = self._parse_group_by()
 
+        # HAVING clause
+        having = None
+        if self._match(TokenType.HAVING):
+            self._advance()
+            having = self._parse_where()
+
         # ORDER BY clause
         order_by = []
         if self._match(TokenType.ORDER):
@@ -459,6 +467,7 @@ class Parser:
             where=where,
             order_by=order_by,
             group_by=group_by,
+            having=having,
             limit=limit,
             joins=joins,
             distinct=distinct,
@@ -631,11 +640,25 @@ class Parser:
             self._advance()
             negated = True
 
-        # Parse column (possibly with table prefix)
+        # Parse column (possibly with table prefix or aggregate syntax)
         table_alias = None
         column = self._expect(TokenType.IDENTIFIER).value
 
-        if self._match(TokenType.DOT):
+        if column.upper() in ('COUNT', 'SUM', 'AVG', 'MIN', 'MAX') and self._match(TokenType.LPAREN):
+            func = column.upper()
+            self._advance()
+            if self._match(TokenType.STAR):
+                self._advance()
+                agg_col = '*'
+            else:
+                agg_col = self._expect(TokenType.IDENTIFIER).value
+                if self._match(TokenType.DOT):
+                    self._advance()
+                    table_alias = agg_col
+                    agg_col = self._expect(TokenType.IDENTIFIER).value
+            self._expect(TokenType.RPAREN)
+            column = f'{func}({agg_col})'
+        elif self._match(TokenType.DOT):
             self._advance()
             table_alias = column
             column = self._expect(TokenType.IDENTIFIER).value
