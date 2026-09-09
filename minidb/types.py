@@ -115,6 +115,10 @@ class TokenType(Enum):
     LIMIT = auto()
     AS = auto()
     DISTINCT = auto()
+    HAVING = auto()
+    BEGIN = auto()
+    COMMIT = auto()
+    ROLLBACK = auto()
 
     # Literals
     IDENTIFIER = auto()
@@ -138,6 +142,7 @@ class TokenType(Enum):
     RPAREN = auto()
     SEMICOLON = auto()
     STAR = auto()
+    PLACEHOLDER = auto()
 
     # Special
     EOF = auto()

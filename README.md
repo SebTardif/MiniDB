@@ -6,12 +6,15 @@ A miniature in-memory database with SQL-like query support, built from scratch u
 
 - **Typed Columns**: INTEGER, STRING, FLOAT, BOOLEAN
 - **CRUD Operations**: INSERT, SELECT, UPDATE, DELETE
+- **Parameters**: `?` placeholders bound after parse (`execute(sql, params)`)
+- **Transactions**: in-memory `BEGIN` / `COMMIT` / `ROLLBACK` snapshots
 - **SQL-like Query Language**:
   - WHERE with AND/OR, NOT, parentheses, comparisons (=, >, <, >=, <=, !=, LIKE, IN), and IS NULL / IS NOT NULL
   - SELECT column aliases (`col AS alias`)
   - SELECT DISTINCT
   - ORDER BY (ASC/DESC)
   - GROUP BY with aggregations
+  - HAVING after GROUP BY
   - LIMIT clause
 - **Aggregations**: COUNT, SUM, AVG, MIN, MAX
 - **JOINs**: INNER JOIN and LEFT JOIN between tables
@@ -35,6 +38,8 @@ python main.py              # Run demo
 
 `execute()` runs any statement and returns a row id, an affected-row count, or None.
 `query()` is SELECT-only and returns rows.
+Both accept an optional `params` sequence for `?` placeholders. Values are bound
+after parse, not interpolated into the SQL string.
 
 ```python
 from minidb import MiniDB, Column, ColumnType
@@ -66,10 +71,13 @@ db.create_table(
 
 # Insert data
 db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 75000.0, true)")
-db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (2, 'Bob', 25, 55000.0, false)")
+db.execute(
+    'INSERT INTO users (id, name, age, salary, active) VALUES (?, ?, ?, ?, ?)',
+    [2, 'Bob', 25, 55000.0, False],
+)
 
 # Query data
-results = db.query('SELECT * FROM users WHERE age > 28')
+results = db.query('SELECT * FROM users WHERE age > ?', [28])
 
 # Complex queries
 results = db.query("""
@@ -84,11 +92,12 @@ print(db.explain('SELECT * FROM users WHERE id = 1'))
 # Aggregations
 results = db.query('SELECT COUNT(*), AVG(salary) FROM users')
 
-# GROUP BY
+# GROUP BY with HAVING
 results = db.query("""
     SELECT active, COUNT(*), AVG(salary)
     FROM users
     GROUP BY active
+    HAVING COUNT(*) > 1
 """)
 
 # JOINs
@@ -104,6 +113,11 @@ affected = db.execute('UPDATE users SET salary = 80000.0 WHERE id = 1')
 
 # DELETE
 affected = db.execute('DELETE FROM users WHERE active = false')
+
+# Snapshot transaction (in-memory only)
+db.execute('BEGIN')
+db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (3, 'Cara', 40, 90000.0, true)")
+db.execute('ROLLBACK')
 
 # DROP TABLE (SQL or Python API)
 db.execute('CREATE TABLE scratch (id INTEGER PRIMARY KEY)')
@@ -133,7 +147,11 @@ CREATE TABLE table_name (
 
 ```sql
 INSERT INTO table_name (col1, col2, col3) VALUES (1, 'value', 3.14)
+INSERT INTO table_name (col1, col2, col3) VALUES (?, ?, ?)
 ```
+
+Use `db.execute(sql, [1, 'value', 3.14])` or `db.query(sql, params)` to bind `?`
+left-to-right. Too few or too many params raise `InvalidQueryError`.
 
 ### SELECT
 
@@ -144,7 +162,19 @@ SELECT col1 AS alias FROM table_name
 SELECT DISTINCT col1 FROM table_name
 SELECT DISTINCT col1, col2 FROM table_name
 SELECT col1, COUNT(*), AVG(col2) FROM table_name GROUP BY col1
+SELECT col1, COUNT(*) FROM table_name GROUP BY col1 HAVING COUNT(*) > 1
+SELECT col1, COUNT(*) AS n FROM table_name GROUP BY col1 HAVING n > 1
 ```
+
+### HAVING
+
+```sql
+HAVING COUNT(*) > 1
+HAVING SUM(quantity) > 30
+HAVING n > 2
+```
+
+HAVING filters grouped rows after GROUP BY (or the single row from an ungrouped aggregate). It is rejected when the SELECT has neither GROUP BY nor aggregate functions.
 
 ### WHERE Clause
 
@@ -157,6 +187,8 @@ WHERE col <= value
 WHERE col != value
 WHERE col LIKE 'pattern%'     -- % matches any sequence
 WHERE col IN (1, 2, 3)
+WHERE col = ?
+WHERE col IN (?, ?)
 WHERE col IS NULL
 WHERE col IS NOT NULL
 WHERE cond1 AND cond2
@@ -204,6 +236,17 @@ UPDATE table_name SET col1 = value1, col2 = value2 WHERE condition
 DELETE FROM table_name WHERE condition
 ```
 
+### BEGIN / COMMIT / ROLLBACK
+
+```sql
+BEGIN
+COMMIT
+ROLLBACK
+```
+
+These copy the in-memory tables at `BEGIN` and restore that copy on `ROLLBACK`.
+They are not durable and not concurrent. MiniDB is single-threaded.
+
 ### DROP TABLE
 
 ```sql
@@ -249,10 +292,10 @@ python -m pytest tests/ -v --cov=minidb
 
 ### Test Categories
 
-- **test_database.py**: Database lifecycle and table management
+- **test_database.py**: Database lifecycle, table management, `?` parameters, and snapshot transactions
 - **test_crud.py**: INSERT, SELECT, UPDATE, DELETE operations
 - **test_queries.py**: WHERE, ORDER BY, LIMIT, parser errors, type validation
-- **test_aggregations.py**: COUNT, SUM, AVG, MIN, MAX, GROUP BY
+- **test_aggregations.py**: COUNT, SUM, AVG, MIN, MAX, GROUP BY, HAVING
 - **test_joins.py**: JOIN operations
 - **test_index.py**: Indexing and query planning
 - **test_persistence.py**: Save/load functionality
@@ -271,7 +314,7 @@ MiniDB is designed for small to medium datasets:
 
 - In-memory only (no disk-based storage during operation)
 - Single-threaded
-- No transactions
+- Transactions are in-memory snapshots only (not durable, not concurrent)
 - No foreign key constraints
 - Limited JOIN support (INNER and LEFT JOIN only, no RIGHT JOIN execution)
 
@@ -288,7 +331,6 @@ Areas for improvement:
 - B-tree indexes for range queries
 - RIGHT JOIN
 - Subqueries
-- HAVING clause
 - More aggregate functions
 - Query optimization
 - Concurrent access

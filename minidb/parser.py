@@ -1,9 +1,10 @@
 """SQL parser for MiniDB."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from .errors import SyntaxError_
+from .errors import InvalidQueryError, SyntaxError_
 from .types import ColumnType, TokenType
 
 
@@ -14,6 +15,11 @@ class Token:
     type: TokenType
     value: Any
     position: int
+
+
+@dataclass
+class ParamPlaceholder:
+    """Sentinel for a ? parameter that is bound after parse."""
 
 
 @dataclass
@@ -84,6 +90,7 @@ class SelectQuery:
     where: WhereClause | None = None
     order_by: list[OrderByItem] = field(default_factory=list)
     group_by: list[str] = field(default_factory=list)
+    having: WhereClause | None = None
     limit: int | None = None
     joins: list[JoinClause] = field(default_factory=list)
     distinct: bool = False
@@ -140,6 +147,21 @@ class DropTableQuery:
     table: str
 
 
+@dataclass
+class BeginQuery:
+    """Represents a parsed BEGIN statement."""
+
+
+@dataclass
+class CommitQuery:
+    """Represents a parsed COMMIT statement."""
+
+
+@dataclass
+class RollbackQuery:
+    """Represents a parsed ROLLBACK statement."""
+
+
 class Lexer:
     """Tokenizes SQL queries."""
 
@@ -178,6 +200,10 @@ class Lexer:
         'LIMIT': TokenType.LIMIT,
         'AS': TokenType.AS,
         'DISTINCT': TokenType.DISTINCT,
+        'HAVING': TokenType.HAVING,
+        'BEGIN': TokenType.BEGIN,
+        'COMMIT': TokenType.COMMIT,
+        'ROLLBACK': TokenType.ROLLBACK,
     }
 
     def __init__(self, sql: str):
@@ -244,6 +270,9 @@ class Lexer:
                 self.pos += 1
             elif char == '*':
                 self.tokens.append(Token(TokenType.STAR, '*', self.pos))
+                self.pos += 1
+            elif char == '?':
+                self.tokens.append(Token(TokenType.PLACEHOLDER, '?', self.pos))
                 self.pos += 1
             else:
                 raise SyntaxError_(f"Unexpected character: '{char}'", self.pos)
@@ -349,7 +378,19 @@ class Parser:
         self.tokens = tokens
         self.pos = 0
 
-    def parse(self) -> SelectQuery | InsertQuery | UpdateQuery | DeleteQuery | CreateTableQuery | DropTableQuery:
+    def parse(
+        self,
+    ) -> (
+        SelectQuery
+        | InsertQuery
+        | UpdateQuery
+        | DeleteQuery
+        | CreateTableQuery
+        | DropTableQuery
+        | BeginQuery
+        | CommitQuery
+        | RollbackQuery
+    ):
         """Parse the token stream into a query object."""
         token = self._current()
 
@@ -365,6 +406,12 @@ class Parser:
             return self._parse_create()
         elif token.type == TokenType.DROP:
             return self._parse_drop()
+        elif token.type == TokenType.BEGIN:
+            return self._parse_begin()
+        elif token.type == TokenType.COMMIT:
+            return self._parse_commit()
+        elif token.type == TokenType.ROLLBACK:
+            return self._parse_rollback()
         else:
             raise SyntaxError_(f'Unexpected token: {token.value}', token.position)
 
@@ -437,6 +484,12 @@ class Parser:
             self._expect(TokenType.BY)
             group_by = self._parse_group_by()
 
+        # HAVING clause
+        having = None
+        if self._match(TokenType.HAVING):
+            self._advance()
+            having = self._parse_where()
+
         # ORDER BY clause
         order_by = []
         if self._match(TokenType.ORDER):
@@ -459,6 +512,7 @@ class Parser:
             where=where,
             order_by=order_by,
             group_by=group_by,
+            having=having,
             limit=limit,
             joins=joins,
             distinct=distinct,
@@ -631,11 +685,25 @@ class Parser:
             self._advance()
             negated = True
 
-        # Parse column (possibly with table prefix)
+        # Parse column (possibly with table prefix or aggregate syntax)
         table_alias = None
         column = self._expect(TokenType.IDENTIFIER).value
 
-        if self._match(TokenType.DOT):
+        if column.upper() in ('COUNT', 'SUM', 'AVG', 'MIN', 'MAX') and self._match(TokenType.LPAREN):
+            func = column.upper()
+            self._advance()
+            if self._match(TokenType.STAR):
+                self._advance()
+                agg_col = '*'
+            else:
+                agg_col = self._expect(TokenType.IDENTIFIER).value
+                if self._match(TokenType.DOT):
+                    self._advance()
+                    table_alias = agg_col
+                    agg_col = self._expect(TokenType.IDENTIFIER).value
+            self._expect(TokenType.RPAREN)
+            column = f'{func}({agg_col})'
+        elif self._match(TokenType.DOT):
             self._advance()
             table_alias = column
             column = self._expect(TokenType.IDENTIFIER).value
@@ -722,6 +790,9 @@ class Parser:
         elif token.type == TokenType.NULL:
             self._advance()
             return None
+        elif token.type == TokenType.PLACEHOLDER:
+            self._advance()
+            return ParamPlaceholder()
         else:
             raise SyntaxError_(f'Expected literal value, got {token.type.name}', token.position)
 
@@ -900,10 +971,140 @@ class Parser:
 
         return DropTableQuery(table=table)
 
+    def _parse_begin(self) -> BeginQuery:
+        """Parse a BEGIN statement."""
+        self._expect(TokenType.BEGIN)
+        self._expect_end()
+        return BeginQuery()
 
-def parse_sql(sql: str) -> SelectQuery | InsertQuery | UpdateQuery | DeleteQuery | CreateTableQuery | DropTableQuery:
+    def _parse_commit(self) -> CommitQuery:
+        """Parse a COMMIT statement."""
+        self._expect(TokenType.COMMIT)
+        self._expect_end()
+        return CommitQuery()
+
+    def _parse_rollback(self) -> RollbackQuery:
+        """Parse a ROLLBACK statement."""
+        self._expect(TokenType.ROLLBACK)
+        self._expect_end()
+        return RollbackQuery()
+
+
+def parse_sql(
+    sql: str,
+) -> (
+    SelectQuery
+    | InsertQuery
+    | UpdateQuery
+    | DeleteQuery
+    | CreateTableQuery
+    | DropTableQuery
+    | BeginQuery
+    | CommitQuery
+    | RollbackQuery
+):
     """Parse a SQL string into a query object."""
     lexer = Lexer(sql)
     tokens = lexer.tokenize()
     parser = Parser(tokens)
     return parser.parse()
+
+
+def _count_placeholders_in_value(value: Any) -> int:
+    if isinstance(value, ParamPlaceholder):
+        return 1
+    if isinstance(value, list):
+        return sum(_count_placeholders_in_value(item) for item in value)
+    return 0
+
+
+def _count_where_placeholders(where: WhereClause | None) -> int:
+    if where is None:
+        return 0
+    total = 0
+    for cond in where.conditions:
+        if isinstance(cond, Condition):
+            total += _count_placeholders_in_value(cond.value)
+        elif isinstance(cond, WhereClause):
+            total += _count_where_placeholders(cond)
+    return total
+
+
+def _count_query_placeholders(
+    query: (
+        SelectQuery
+        | InsertQuery
+        | UpdateQuery
+        | DeleteQuery
+        | CreateTableQuery
+        | DropTableQuery
+        | BeginQuery
+        | CommitQuery
+        | RollbackQuery
+    ),
+) -> int:
+    if isinstance(query, InsertQuery):
+        return sum(_count_placeholders_in_value(value) for value in query.values)
+    if isinstance(query, UpdateQuery):
+        return sum(
+            _count_placeholders_in_value(value) for value in query.set_clause.values()
+        ) + _count_where_placeholders(query.where)
+    if isinstance(query, DeleteQuery):
+        return _count_where_placeholders(query.where)
+    if isinstance(query, SelectQuery):
+        return _count_where_placeholders(query.where) + _count_where_placeholders(query.having)
+    return 0
+
+
+def _bind_value(value: Any, params: list[Any], index: list[int]) -> Any:
+    if isinstance(value, ParamPlaceholder):
+        bound = params[index[0]]
+        index[0] += 1
+        return bound
+    if isinstance(value, list):
+        return [_bind_value(item, params, index) for item in value]
+    return value
+
+
+def _bind_where(where: WhereClause | None, params: list[Any], index: list[int]) -> None:
+    if where is None:
+        return
+    for cond in where.conditions:
+        if isinstance(cond, Condition):
+            cond.value = _bind_value(cond.value, params, index)
+        elif isinstance(cond, WhereClause):
+            _bind_where(cond, params, index)
+
+
+def bind_params(
+    query: (
+        SelectQuery
+        | InsertQuery
+        | UpdateQuery
+        | DeleteQuery
+        | CreateTableQuery
+        | DropTableQuery
+        | BeginQuery
+        | CommitQuery
+        | RollbackQuery
+    ),
+    params: Sequence[Any] | None = None,
+) -> None:
+    """Replace ParamPlaceholder sentinels left-to-right with bound values."""
+    values = list(params) if params is not None else []
+    expected = _count_query_placeholders(query)
+    if expected != len(values):
+        raise InvalidQueryError(f'expected {expected} parameters, got {len(values)}')
+
+    index = [0]
+    if isinstance(query, InsertQuery):
+        query.values = [_bind_value(value, values, index) for value in query.values]
+    elif isinstance(query, UpdateQuery):
+        for key in query.set_clause:
+            query.set_clause[key] = _bind_value(query.set_clause[key], values, index)
+        _bind_where(query.where, values, index)
+    elif isinstance(query, DeleteQuery):
+        _bind_where(query.where, values, index)
+    elif isinstance(query, SelectQuery):
+        _bind_where(query.where, values, index)
+        _bind_where(query.having, values, index)
