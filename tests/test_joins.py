@@ -187,6 +187,66 @@ class TestJoins:
         with pytest.raises(TableNotFoundError):
             db.query('SELECT * FROM users JOIN ghost ON users.id = ghost.user_id')
 
+    def test_join_reversed_qualifiers(self, db):
+        """ON orders.user_id = users.id matches the same 5 rows as the usual order."""
+        usual = db.query("""
+            SELECT users.name, orders.product, orders.total
+            FROM users
+            JOIN orders ON users.id = orders.user_id
+        """)
+        reversed_on = db.query("""
+            SELECT users.name, orders.product, orders.total
+            FROM users
+            JOIN orders ON orders.user_id = users.id
+        """)
+
+        assert len(usual) == 5
+        assert len(reversed_on) == 5
+
+        usual_pairs = sorted((r['name'], r['product'], r['total']) for r in usual)
+        reversed_pairs = sorted((r['name'], r['product'], r['total']) for r in reversed_on)
+        assert reversed_pairs == usual_pairs
+
+        names = {r['name'] for r in reversed_on}
+        assert names == {'Alice', 'Bob'}
+
+    def test_left_join_reversed_qualifiers_includes_unmatched(self, db):
+        """LEFT JOIN with reversed ON qualifiers still includes Charlie."""
+        results = db.query("""
+            SELECT users.id, users.name, orders.product
+            FROM users
+            LEFT JOIN orders ON orders.user_id = users.id
+        """)
+
+        assert len(results) == 6
+        charlie = [r for r in results if r['name'] == 'Charlie']
+        assert len(charlie) == 1
+        assert charlie[0]['id'] == 3
+        assert charlie[0]['product'] is None
+
+        alice = [r for r in results if r['name'] == 'Alice']
+        assert len(alice) == 2
+
+    def test_join_unknown_qualifier(self, db):
+        """ON ghost.id = users.id raises InvalidQueryError."""
+        with pytest.raises(InvalidQueryError, match='ghost'):
+            db.query("""
+                SELECT users.name
+                FROM users
+                JOIN orders ON ghost.id = users.id
+            """)
+
+    def test_join_unqualified_on_keeps_operand_order(self, db):
+        """Unqualified ON uses first operand as FROM side and second as JOIN side."""
+        results = db.query("""
+            SELECT users.name, orders.product
+            FROM users
+            JOIN orders ON id = user_id
+        """)
+        assert len(results) == 5
+        names = {r['name'] for r in results}
+        assert names == {'Alice', 'Bob'}
+
     def test_right_join_not_supported(self, db):
         """RIGHT JOIN raises; INNER and LEFT JOIN still work."""
         with pytest.raises(InvalidQueryError, match='RIGHT JOIN is not supported'):

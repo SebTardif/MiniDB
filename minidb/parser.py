@@ -565,7 +565,7 @@ class Parser:
             right_column=right_col,
             join_type=join_type,
             left_table=left_table,
-            right_table=right_table_alias or right_table,
+            right_table=right_table_alias,
         )
 
     def _parse_where(self) -> WhereClause:

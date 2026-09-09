@@ -12,6 +12,7 @@ from .parser import (
     DeleteQuery,
     DropTableQuery,
     InsertQuery,
+    JoinClause,
     OrderByItem,
     SelectColumn,
     SelectQuery,
@@ -138,17 +139,19 @@ class QueryExecutor:
             right_table = self.tables[join.table]
             right_rows = list(right_table.scan())
 
-            # Build index on right table for join column
+            from_column, join_column = self._join_on_columns(query.table, join)
+
+            # Build index on JOIN table for the JOIN-side column
             right_index = defaultdict(list)
             for rid, row in right_rows:
-                key = row.get(join.right_column)
+                key = row.get(join_column)
                 if key is not None:
                     right_index[key].append((rid, row))
 
             # Perform nested loop join
             new_rows = []
             for left_id, left_row in left_rows:
-                left_key = left_row.get(join.left_column)
+                left_key = left_row.get(from_column)
                 matches = right_index.get(left_key, [])
 
                 if matches:
@@ -183,6 +186,38 @@ class QueryExecutor:
             left_rows = [(rid, row) for rid, row in left_rows if self._evaluate_where(row, query.where)]
 
         return left_rows
+
+    def _join_on_columns(self, from_table: str, join: JoinClause) -> tuple[str, str]:
+        """Map ON operands to (FROM-side column, JOIN-side column)."""
+        known = {from_table, join.table}
+
+        def side_of(qualifier: str | None) -> str | None:
+            if qualifier is None:
+                return None
+            if qualifier not in known:
+                raise InvalidQueryError(f"unknown table qualifier '{qualifier}'")
+            return 'from' if qualifier == from_table else 'join'
+
+        left_side = side_of(join.left_table)
+        right_side = side_of(join.right_table)
+
+        if left_side is None and right_side is None:
+            return join.left_column, join.right_column
+
+        from_column: str | None = None
+        join_column: str | None = None
+        for side, column in ((left_side, join.left_column), (right_side, join.right_column)):
+            if side == 'from':
+                from_column = column
+            elif side == 'join':
+                join_column = column
+
+        if from_column is None:
+            from_column = join.right_column if join_column == join.left_column else join.left_column
+        if join_column is None:
+            join_column = join.right_column if from_column == join.left_column else join.left_column
+
+        return from_column, join_column
 
     def _find_index_condition(self, where: WhereClause, column: str) -> Condition | None:
         """Find the condition that uses the index column."""
