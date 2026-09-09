@@ -12,7 +12,7 @@ git clone https://github.com/SebTardif/MiniDB.git
 cd MiniDB
 
 # Install dev tools
-pip install ruff mypy pytest pytest-cov
+pip install ruff==0.16.6 mypy pytest pytest-cov
 
 # Verify everything works
 python -m pytest tests/ -v
