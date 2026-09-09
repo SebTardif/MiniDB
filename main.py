@@ -234,12 +234,13 @@ def main():
     # DELETE
     print_section('13. DELETE')
 
-    print('\nDeactivating users older than 33...')
-    affected = db.execute('UPDATE users SET active = false WHERE age > 33')
-    print(f'  Updated {affected} row(s)')
+    print('\nDeleting order id 8...')
+    print('  DELETE FROM orders WHERE id = 8')
+    affected = db.execute('DELETE FROM orders WHERE id = 8')
+    print(f'  Affected {affected} row(s)')
 
-    results = db.query('SELECT name, age, active FROM users ORDER BY age DESC')
-    print_results(results, 'Users with updated active status')
+    results = db.query('SELECT id, product, quantity, total FROM orders WHERE id = 8')
+    print_results(results, 'Order 8 after DELETE')
 
     # Persistence
     print_section('14. Persistence')
