@@ -1,11 +1,11 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
+  # Recipe A: product tests on PR (and merge_group if a queue is added).
+  # Do not compile again on push to main. Release publish stays in release.yml.
   pull_request:
     branches: [main]
-  workflow_call:
+  merge_group: {}
   workflow_dispatch: {}
 
 concurrency:
@@ -42,6 +42,10 @@ jobs:
 
       - name: Ruff format check
         run: ruff format --check .
+      - name: Lock Recipe A and notes-branch apply
+        run: |
+          python3 scripts/test_apply_release_notes.py
+          python3 scripts/test_workflow_triggers.py
 
   type-check:
     name: Type Check

@@ -13,13 +13,11 @@ permissions:
   contents: read
 
 jobs:
-  ci:
-    name: CI checks
-    uses: ./.github/workflows/ci.yml
-
+  # Recipe A/E: do not re-run the product test matrix on every main push.
+  # PR CI already tested the tree. This job is release-please-equivalent
+  # (python-semantic-release) plus one trusted publish compile.
   release:
     name: Semantic Release
-    needs: ci
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.repository_owner == 'sebtardif'
@@ -64,3 +62,14 @@ jobs:
         continue-on-error: true
         with:
           skip-existing: true
+
+      - name: Apply curated release notes
+        if: steps.release.outputs.released == 'true'
+        continue-on-error: true
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_NOTES: ${{ vars.RELEASE_NOTES }}
+          RELEASE_NOTES_TAG: ${{ vars.RELEASE_NOTES_TAG }}
+        run: bash scripts/apply-release-notes.sh
