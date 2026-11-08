@@ -127,40 +127,40 @@ class Table:
         if not row_ids or not updates:
             return 0
 
-        count = 0
+        # Plan every row before writing. A later duplicate must not keep
+        # the first row's new primary key.
+        planned: list[tuple[int, int, dict, dict]] = []
+        pk_column = self.schema.primary_key
+        new_keys: dict[Any, int] = {}
         for i, row_id in enumerate(self._row_ids):
-            if row_id in row_ids:
-                old_row = self._rows[i]
-                new_row = old_row.copy()
+            if row_id not in row_ids:
+                continue
+            old_row = self._rows[i]
+            new_row = old_row.copy()
+            for col, val in updates.items():
+                col_def = self.schema.get_column(col)
+                if col_def is None:
+                    raise ColumnNotFoundError(col, self.name)
+                new_row[col] = col_def.validate(val)
+            validated = self.schema.validate_row(new_row, allow_missing=True)
+            if pk_column and pk_column in updates:
+                new_pk = validated[pk_column]
+                if new_pk is not None:
+                    if new_pk in new_keys:
+                        raise DuplicateKeyError(new_pk)
+                    index = self.get_index(pk_column)
+                    if index and index.has_value(new_pk):
+                        existing_ids = index.lookup(new_pk)
+                        if any(existing_id not in row_ids for existing_id in existing_ids):
+                            raise DuplicateKeyError(new_pk)
+                    new_keys[new_pk] = row_id
+            planned.append((i, row_id, old_row, validated))
 
-                # Apply updates
-                for col, val in updates.items():
-                    col_def = self.schema.get_column(col)
-                    if col_def is None:
-                        raise ColumnNotFoundError(col, self.name)
-                    new_row[col] = col_def.validate(val)
+        for i, row_id, old_row, validated in planned:
+            self._index_manager.update_row(old_row, validated, row_id)
+            self._rows[i] = validated
 
-                # Validate the new row
-                validated = self.schema.validate_row(new_row, allow_missing=True)
-
-                pk_column = self.schema.primary_key
-                if pk_column and pk_column in updates:
-                    new_pk = validated[pk_column]
-                    if new_pk is not None:
-                        index = self.get_index(pk_column)
-                        if index and index.has_value(new_pk):
-                            existing_ids = index.lookup(new_pk)
-                            if any(existing_id != row_id for existing_id in existing_ids):
-                                raise DuplicateKeyError(new_pk)
-
-                # Update indexes
-                self._index_manager.update_row(old_row, validated, row_id)
-
-                # Store the updated row
-                self._rows[i] = validated
-                count += 1
-
-        return count
+        return len(planned)
 
     def delete_rows(self, row_ids: set[int]) -> int:
         """
