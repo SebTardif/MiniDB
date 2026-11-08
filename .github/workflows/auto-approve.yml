@@ -39,12 +39,14 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           set -euo pipefail
-          if ! gh pr review --approve "$PR_URL"; then
-            echo "Approve returned non-zero; checking the current review"
+          if gh pr review --approve "$PR_URL"; then
+            echo "Approved"
+            exit 0
           fi
-          decision=$(gh pr view "$PR_URL" --json reviewDecision --jq '.reviewDecision')
-          echo "reviewDecision=${decision}"
-          if [ "$decision" != "APPROVED" ]; then
-            echo "Pull request is not approved"
+          echo "Approve returned non-zero; checking for an existing approval"
+          count=$(gh pr view "$PR_URL" --json reviews --jq '[.reviews[] | select(.state=="APPROVED")] | length')
+          echo "existing approvals=${count}"
+          if [ "$count" = "0" ]; then
+            echo "Pull request has no approving review"
             exit 1
           fi
