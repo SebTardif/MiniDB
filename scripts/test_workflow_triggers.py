@@ -43,6 +43,16 @@ class WorkflowTriggerTests(unittest.TestCase):
         self.assertNotIn('pull_request:', on_block)
         self.assertNotIn('push:', on_block)
 
+    def test_dependabot_auto_merge_stays_off_pr_code(self) -> None:
+        text = (WORKFLOWS / 'dependabot-auto-merge.yml').read_text(encoding='utf-8')
+        on_block = _on_block(text)
+        self.assertIn('pull_request_target:', on_block)
+        self.assertIn('workflow_dispatch:', on_block)
+        self.assertNotIn('actions/checkout', text)
+        self.assertIn('gh pr merge --auto --squash', text)
+        self.assertIn('version-update:semver-major', text)
+        self.assertIn('timeout-minutes: 5', text)
+
 
 if __name__ == '__main__':
     unittest.main()

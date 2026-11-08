@@ -4,15 +4,25 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    rebase-strategy: "auto"
+    open-pull-requests-limit: 5
     groups:
       actions:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+    rebase-strategy: "auto"
+    open-pull-requests-limit: 5
     groups:
       python:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"

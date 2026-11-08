@@ -1,0 +1,90 @@
+name: Dependabot auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch: {}
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  auto-merge:
+    name: Auto-merge Dependabot PRs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # pull_request_target runs this file from main. Do not check out the
+    # pull request head. Metadata and gh only read the event payload.
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect a SHA pin labeled as a major
+        id: sha-pin
+        env:
+          PREV: ${{ steps.metadata.outputs.previous-version }}
+          DEPS: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          sha=false
+          if [ -n "${DEPS}" ] && [ "${DEPS}" != "null" ]; then
+            if printf '%s' "$DEPS" | jq -e '
+              type == "array" and length > 0 and
+              all(.[]; (.prevVersion // "") | test("^[0-9a-f]{40}$"))
+            ' >/dev/null; then
+              sha=true
+            fi
+          elif printf '%s' "$PREV" | grep -Eq '^[0-9a-f]{40}$'; then
+            sha=true
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Approve and enable auto-merge
+        if: >-
+          (steps.metadata.outputs.update-type != 'version-update:semver-major' ||
+           steps.sha-pin.outputs.sha == 'true') &&
+          github.event.pull_request.draft == false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          if ! gh pr review --approve "$PR_URL"; then
+            echo "Approve returned non-zero; continuing when a review is already present"
+          fi
+          if gh pr merge --auto --squash "$PR_URL"; then
+            echo "Auto-merge enabled"
+            exit 0
+          fi
+          enabled=$(gh pr view "$PR_URL" --json autoMergeRequest,state --jq 'if .state=="OPEN" and .autoMergeRequest!=null then "yes" else "no" end')
+          if [ "$enabled" = "yes" ]; then
+            echo "Auto-merge was already enabled"
+            exit 0
+          fi
+          echo "Failed to enable auto-merge"
+          exit 1
+
+      - name: Skip major updates
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-major' &&
+          steps.sha-pin.outputs.sha != 'true'
+        run: echo "Skipping major version update; requires manual review"
