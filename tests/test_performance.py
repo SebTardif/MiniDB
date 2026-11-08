@@ -75,6 +75,14 @@ class TestPerformance:
         assert len(results) == 1
         assert results[0]['name'] == 'Item_5000'
 
+    def test_large_primary_key_range(self, large_db):
+        """A primary-key range resolves row ids once, not once per hit."""
+        start = time.perf_counter()
+        results = large_db.query('SELECT id FROM large_table WHERE id >= 0')
+        elapsed = time.perf_counter() - start
+        assert {row['id'] for row in results} == set(range(10000))
+        assert elapsed < 0.15, f'Primary key range took {elapsed:.2f} seconds'
+
     def test_large_select_table_scan(self, large_db):
         """Test that table scan SELECT on large table completes."""
         start = time.time()

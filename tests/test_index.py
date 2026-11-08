@@ -38,6 +38,16 @@ class TestIndexing:
         assert index.lookup(3) == {2}
         assert index.lookup(99) == set()
 
+    def test_primary_key_range_after_delete_returns_remaining_ids(self):
+        """A range still returns every row whose id remains after a delete."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER)')
+        for i in range(20):
+            db.execute('INSERT INTO t (id, n) VALUES (?, ?)', [i, i])
+        db.execute('DELETE FROM t WHERE id = 4')
+        rows = db.query('SELECT id FROM t WHERE id >= 0 ORDER BY id')
+        assert [row['id'] for row in rows] == [i for i in range(20) if i != 4]
+
     def test_index_delete(self):
         """Test index deletion."""
         index = HashIndex(column_name='id')
