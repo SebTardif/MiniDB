@@ -1,6 +1,6 @@
 """Table storage and row management for MiniDB."""
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -91,6 +91,20 @@ class Table:
             return self._rows[idx].copy()
         except ValueError:
             return None
+
+    def rows_for_ids(self, row_ids: Iterable[int]) -> list[tuple[int, Row]]:
+        """Fetch many rows by id in one pass.
+
+        get_row_by_id walks every stored id. A primary-key range that
+        matches thousands of rows was slower than reading the table once.
+        """
+        position = {row_id: index for index, row_id in enumerate(self._row_ids)}
+        found: list[tuple[int, Row]] = []
+        for row_id in row_ids:
+            index = position.get(row_id)
+            if index is not None:
+                found.append((row_id, self._rows[index].copy()))
+        return found
 
     def get_row_id_by_pk(self, pk_value: Any) -> int | None:
         """Get a row ID by primary key value."""

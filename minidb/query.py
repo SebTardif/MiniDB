@@ -151,19 +151,13 @@ class QueryExecutor:
             condition = self._find_index_condition(query.where, plan.index_column, ('=',))
             if index is not None and condition is not None:
                 used_index = True
-                for row_id in index.lookup(condition.value):
-                    row = table.get_row_by_id(row_id)
-                    if row:
-                        rows.append((row_id, row))
+                rows.extend(table.rows_for_ids(index.lookup(condition.value)))
         elif plan.scan_type == ScanType.INDEX_RANGE_SCAN and plan.index_column is not None and query.where is not None:
             index = table.get_index(plan.index_column)
             condition = self._find_index_condition(query.where, plan.index_column, ('<', '<=', '>', '>='))
             if index is not None and condition is not None:
                 used_index = True
-                for row_id in index.range_lookup(condition.operator, condition.value):
-                    row = table.get_row_by_id(row_id)
-                    if row:
-                        rows.append((row_id, row))
+                rows.extend(table.rows_for_ids(index.range_lookup(condition.operator, condition.value)))
 
         if not used_index:
             for row_id, row in table.scan():
