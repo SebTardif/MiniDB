@@ -8,6 +8,18 @@ from minidb import Column, ColumnType, InvalidQueryError, MiniDB, TableNotFoundE
 class TestJoins:
     """Tests for JOIN operations."""
 
+    def test_order_by_the_other_tables_same_column_name(self):
+        """ORDER BY prefs.name uses prefs.name, not the selected users.name."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE prefs (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'zoe')")
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'amy')")
+        db.execute("INSERT INTO prefs (id, name) VALUES (1, 'ann')")
+        db.execute("INSERT INTO prefs (id, name) VALUES (2, 'bob')")
+        rows = db.query('SELECT users.name FROM users JOIN prefs ON users.id = prefs.id ORDER BY prefs.name')
+        assert [row['name'] for row in rows] == ['zoe', 'amy']
+
     @pytest.fixture
     def db(self):
         """Create a test database with users and orders tables."""
