@@ -239,3 +239,68 @@ class TestPersistence:
             assert data['tables']['simple']['rows'][0]['value'] == 'test'
         finally:
             os.unlink(filepath)
+
+    def test_save_load_preserves_row_ids_after_delete(self):
+        """The row id returned by INSERT still finds that row after delete, save, and load."""
+        import json
+
+        from minidb.persistence import CURRENT_VERSION
+
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        first = db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        second = db.execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+        assert isinstance(first, int)
+        assert isinstance(second, int)
+        db.execute('DELETE FROM users WHERE id = 1')
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            filepath = f.name
+
+        try:
+            db.save(filepath)
+            with open(filepath, encoding='utf-8') as f:
+                saved = json.load(f)
+            assert saved['version'] == '1.0'
+            assert CURRENT_VERSION == '1.0'
+            assert saved['tables']['users']['row_ids'] == [second]
+            assert saved['tables']['users']['next_row_id'] == second + 1
+
+            loaded = MiniDB.load(filepath)
+            table = loaded.get_table('users')
+            assert table.get_row_by_id(second) == {'id': 2, 'name': 'Bob'}
+            assert table.get_row_by_id(first) is None
+            third = loaded.execute("INSERT INTO users (id, name) VALUES (3, 'Cara')")
+            assert third == second + 1
+            assert table.get_row_by_id(third) == {'id': 3, 'name': 'Cara'}
+        finally:
+            os.unlink(filepath)
+
+    def test_load_without_row_ids_uses_sequential_ids(self):
+        """A file from before row_ids existed still loads with range ids."""
+        import json
+
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            filepath = f.name
+
+        try:
+            db.save(filepath)
+            with open(filepath, encoding='utf-8') as f:
+                saved = json.load(f)
+            saved['tables']['users'].pop('row_ids', None)
+            assert saved['version'] == '1.0'
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(saved, f)
+
+            loaded = MiniDB.load(filepath)
+            table = loaded.get_table('users')
+            assert table.get_row_by_id(0) == {'id': 1, 'name': 'Alice'}
+            assert table.get_row_by_id(1) == {'id': 2, 'name': 'Bob'}
+            assert table.get_row_by_id(2) is None
+        finally:
+            os.unlink(filepath)

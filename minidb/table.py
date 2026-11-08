@@ -223,6 +223,7 @@ class Table:
             'name': self.name,
             'schema': self.schema.to_dict(),
             'rows': self._rows,
+            'row_ids': list(self._row_ids),
             'next_row_id': self._next_row_id,
         }
 
@@ -234,8 +235,12 @@ class Table:
         table._rows = data['rows']
         table._next_row_id = data.get('next_row_id', len(table._rows))
 
-        # Rebuild row IDs
-        table._row_ids = list(range(len(table._rows)))
+        # Files written before row_ids existed keep 0..n-1.
+        saved_ids = data.get('row_ids')
+        if isinstance(saved_ids, list) and len(saved_ids) == len(table._rows):
+            table._row_ids = list(saved_ids)
+        else:
+            table._row_ids = list(range(len(table._rows)))
 
         # Rebuild indexes
         if table.schema.primary_key:
