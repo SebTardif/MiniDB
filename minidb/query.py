@@ -95,13 +95,20 @@ class QueryExecutor:
             indexed_rows = self._execute_table_scan(main_table, query)
 
         # Apply GROUP BY
+        ordered_source = False
         if query.group_by:
             result_rows = self._execute_group_by(indexed_rows, query)
         elif self._has_aggregates(query.columns):
             # Aggregate without GROUP BY - aggregate all rows
             result_rows = self._execute_aggregation(indexed_rows, query)
         else:
-            # Project columns
+            # Sort source rows first so ORDER BY can name a column that
+            # the SELECT list does not return.
+            if query.order_by:
+                if query.distinct:
+                    self._reject_distinct_order_by(query)
+                indexed_rows = self._sort_indexed_rows(indexed_rows, query, known_tables)
+                ordered_source = True
             result_rows = self._project_columns(indexed_rows, query.columns, query.table, known_tables)
 
         if query.having:
@@ -112,8 +119,9 @@ class QueryExecutor:
         if query.distinct:
             result_rows = self._deduplicate_rows(result_rows)
 
-        # Apply ORDER BY while group keys and aliases are both still present.
-        if query.order_by:
+        # Grouped rows still carry the group key and the alias. Plain
+        # selects were already ordered from the source rows.
+        if query.order_by and not ordered_source:
             result_rows = self._execute_order_by(result_rows, query.order_by, known_tables)
 
         if query.group_by or query.having or self._has_aggregates(query.columns):
@@ -663,6 +671,47 @@ class QueryExecutor:
             results.append(result)
 
         return results
+
+    def _reject_distinct_order_by(self, query: SelectQuery) -> None:
+        """DISTINCT keeps one output row. A hidden sort key would pick which one."""
+        if any(col.name == '*' and col.aggregate is None for col in query.columns):
+            return
+        visible: set[str] = set()
+        for col in query.columns:
+            if col.aggregate is not None:
+                function = col.aggregate.function
+                argument = col.aggregate.column
+                visible.add(col.alias or f'{function}({argument})')
+                continue
+            visible.add(col.alias or col.name)
+        for item in query.order_by:
+            if item.column not in visible:
+                raise InvalidQueryError(f'ORDER BY {item.column} must appear in the SELECT list when DISTINCT is used')
+
+    def _sort_indexed_rows(
+        self,
+        rows: list[tuple[int, Row]],
+        query: SelectQuery,
+        known_tables: set[str],
+    ) -> list[tuple[int, Row]]:
+        """Order source rows, including columns the SELECT list omits."""
+        views: list[Row] = []
+        paired: list[tuple[Row, tuple[int, Row]]] = []
+        for indexed in rows:
+            _row_id, row = indexed
+            view = dict(row)
+            for col in query.columns:
+                if col.alias is None or col.aggregate is not None or col.name == '*':
+                    continue
+                if col.table_alias:
+                    view[col.alias] = self._read_qualified_column(row, col.name, col.table_alias, known_tables)
+                elif col.name in row:
+                    view[col.alias] = row[col.name]
+            views.append(view)
+            paired.append((view, indexed))
+        ordered = self._execute_order_by(views, query.order_by, known_tables)
+        by_identity = {id(view): indexed for view, indexed in paired}
+        return [by_identity[id(view)] for view in ordered]
 
     def _execute_order_by(
         self,

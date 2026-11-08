@@ -649,9 +649,21 @@ class TestWhereClause:
             db.query('SELECT * FROM users ORDER BY id LIMIT -1')
 
     def test_order_by_unprojected_column(self, db):
-        """ORDER BY a column that was not selected raises ColumnNotFoundError."""
-        with pytest.raises(ColumnNotFoundError):
-            db.query('SELECT name FROM users ORDER BY age')
+        """ORDER BY can use a table column that is not in the SELECT list."""
+        by_age = db.query('SELECT name FROM users ORDER BY age')
+        assert [row['name'] for row in by_age] == ['Bob', 'Diana', 'Alice', 'Eve', 'Charlie']
+
+        by_age_desc = db.query('SELECT id FROM users WHERE age > 30 ORDER BY age DESC')
+        assert [row['id'] for row in by_age_desc] == [3, 5]
+
+        aliased = db.query('SELECT age AS years FROM users ORDER BY age')
+        assert [row['years'] for row in aliased] == [25, 28, 30, 32, 35]
+        assert 'age' not in aliased[0]
+
+    def test_distinct_order_by_must_be_selected(self, db):
+        """DISTINCT cannot order by a column the result does not show."""
+        with pytest.raises(InvalidQueryError, match='DISTINCT'):
+            db.query('SELECT DISTINCT name FROM users ORDER BY age')
 
     def test_order_by_alias(self, db):
         """ORDER BY can use a SELECT alias as the result key."""
