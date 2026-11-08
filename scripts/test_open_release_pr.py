@@ -49,6 +49,7 @@ class OpenReleasePrTests(unittest.TestCase):
         self.assertIn('--no-tag', release_step)
         self.assertIn('--no-vcs-release', release_step)
         self.assertIn('--skip-build', release_step)
+        self.assertIn('env -u GITHUB_OUTPUT', release_step)
         self.assertIn('bash scripts/open-release-pr.sh', text)
         self.assertNotIn('HEAD:refs/heads/main', script)
         self.assertNotIn('git push origin main', script)

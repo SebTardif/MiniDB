@@ -45,8 +45,9 @@ jobs:
 
       # main requires a pull request. Commit locally, then open
       # chore/release-<version>. Tag and publish only after that merges.
-      # The v10 action errors with "commit_sha" unset when push and tag
-      # are false, so the CLI commits locally and this job opens the PR.
+      # v10.7 writes Actions outputs when GITHUB_OUTPUT is set, and it
+      # requires commit_sha unless it also creates a tag. Unset that
+      # variable so the CLI only makes the local commit.
       - name: Python Semantic Release
         id: release
         if: github.event_name != 'push' || !startsWith(github.event.head_commit.message || '', 'chore(release):')
@@ -58,7 +59,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           before="$(git rev-parse HEAD)"
-          semantic-release -v version --commit --no-tag --no-push --no-vcs-release --skip-build
+          env -u GITHUB_OUTPUT semantic-release -v version --commit --no-tag --no-push --no-vcs-release --skip-build
           after="$(git rev-parse HEAD)"
           version="$(python3 -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])')"
           if [ "$before" != "$after" ]; then
