@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import Column, ColumnNotFoundError, ColumnType, InvalidQueryError, MiniDB
+from minidb import Column, ColumnNotFoundError, ColumnType, InvalidQueryError, MiniDB, TypeMismatchError
 
 
 class TestAggregations:
@@ -52,6 +52,20 @@ class TestAggregations:
 
         assert len(results) == 1
         assert results[0]['SUM(quantity)'] == 70  # 10+5+20+15+8+12
+
+    def test_sum_of_strings_is_a_type_error(self):
+        """SUM on text must not raise a raw TypeError."""
+        db = MiniDB()
+        db.execute('CREATE TABLE names (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO names (id, name) VALUES (1, 'a')")
+        db.execute("INSERT INTO names (id, name) VALUES (2, 'b')")
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT SUM(name) FROM names')
+
+    def test_select_star_group_by_rejects_hidden_columns(self, db):
+        """SELECT * GROUP BY must not drop columns that were not grouped."""
+        with pytest.raises(InvalidQueryError):
+            db.query('SELECT * FROM sales GROUP BY category')
 
     def test_avg(self, db):
         """Test AVG function."""
@@ -224,6 +238,11 @@ class TestAggregations:
 
         dropped = db.query('SELECT COUNT(*) FROM sales HAVING COUNT(*) > 10')
         assert dropped == []
+
+    def test_bare_column_with_aggregate_requires_group_by(self, db):
+        """SELECT category, COUNT(*) without GROUP BY is not a one-row count."""
+        with pytest.raises(InvalidQueryError):
+            db.query('SELECT category, COUNT(*) FROM sales')
 
     def test_having_without_group_by_or_aggregates(self, db):
         """HAVING without GROUP BY or SELECT aggregates raises InvalidQueryError."""

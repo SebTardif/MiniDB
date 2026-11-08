@@ -161,6 +161,22 @@ class TestJoins:
         assert len(alice) == 2
         assert {r['product'] for r in alice} == {'Widget', 'Gadget'}
 
+    def test_same_column_name_from_both_tables_stays_distinct(self, db):
+        """users.id and orders.id must not overwrite each other."""
+        results = db.query("""
+            SELECT users.id, orders.id
+            FROM users
+            LEFT JOIN orders ON users.id = orders.user_id
+        """)
+
+        gadget = [r for r in results if r.get('orders.id') == 2]
+        assert len(gadget) == 1
+        assert gadget[0]['users.id'] == 1
+
+        charlie = [r for r in results if r.get('users.id') == 3]
+        assert len(charlie) == 1
+        assert charlie[0]['orders.id'] is None
+
     def test_left_join_is_null(self, db):
         """Charlie's unmatched LEFT JOIN row matches orders.product IS NULL."""
         results = db.query("""

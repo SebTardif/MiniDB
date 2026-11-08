@@ -24,6 +24,32 @@ from .table import Table
 from .types import QueryResult, Row
 
 
+def _assign_output(
+    result: dict[str, Any],
+    written: dict[str, str | None],
+    out_name: str,
+    value: Any,
+    qualifier: str | None,
+) -> None:
+    """Store a projected value. A second column with the same bare name gets a qualifier."""
+    if out_name not in result:
+        result[out_name] = value
+        written[out_name] = qualifier
+        return
+    previous = written.get(out_name)
+    if previous == qualifier:
+        result[out_name] = value
+        return
+    if previous:
+        result[f'{previous}.{out_name}'] = result.pop(out_name)
+        written.pop(out_name, None)
+    if qualifier:
+        result[f'{qualifier}.{out_name}'] = value
+    else:
+        result[out_name] = value
+        written[out_name] = None
+
+
 class QueryExecutor:
     """Executes parsed SQL queries against the database."""
 
@@ -87,8 +113,10 @@ class QueryExecutor:
         if query.order_by:
             result_rows = self._execute_order_by(result_rows, query.order_by)
 
-        # Apply LIMIT
+        # Apply LIMIT. A negative slice would drop rows from the end.
         if query.limit is not None:
+            if query.limit < 0:
+                raise InvalidQueryError('LIMIT must be zero or positive')
             result_rows = result_rows[: query.limit]
 
         return result_rows
@@ -373,7 +401,8 @@ class QueryExecutor:
             for i, group_col in enumerate(query.group_by):
                 result_row[group_col] = key[i]
 
-            # Add aggregate columns
+            # Add selected columns. A bare column or * that is not grouped
+            # would otherwise keep one arbitrary value and hide the rest.
             for sel_col in query.columns:
                 if sel_col.aggregate:
                     agg_value = self._compute_aggregate(
@@ -381,7 +410,15 @@ class QueryExecutor:
                     )
                     agg_name = sel_col.alias or f'{sel_col.aggregate.function}({sel_col.aggregate.column})'
                     result_row[agg_name] = agg_value
-                elif sel_col.name not in result_row and sel_col.name != '*':
+                elif sel_col.name == '*':
+                    if sample is not None:
+                        hidden = [key for key in sample if '.' not in key and key not in query.group_by]
+                        if hidden:
+                            raise InvalidQueryError(f'SELECT * with GROUP BY leaves {hidden[0]!r} ungrouped')
+                    continue
+                elif sel_col.name not in query.group_by:
+                    raise InvalidQueryError(f"Column '{sel_col.name}' must appear in GROUP BY or be aggregated")
+                elif sel_col.name not in result_row:
                     result_row[sel_col.name] = group_rows[0].get(sel_col.name)
 
             for spec in self._having_aggregate_names(query.having):
@@ -423,6 +460,12 @@ class QueryExecutor:
 
     def _execute_aggregation(self, rows: list[tuple[int, Row]], query: SelectQuery) -> list[Row]:
         """Execute aggregation without GROUP BY."""
+        bare = [col.name for col in query.columns if not col.aggregate and col.name != '*']
+        if bare:
+            raise InvalidQueryError(f"Column '{bare[0]}' must appear in GROUP BY or be aggregated")
+        if any(col.name == '*' and not col.aggregate for col in query.columns):
+            raise InvalidQueryError('SELECT * cannot be combined with aggregates without GROUP BY')
+
         row_list = [row for _, row in rows]
         result_row = {}
 
@@ -454,14 +497,17 @@ class QueryExecutor:
         if not values:
             return None
 
-        if func == 'SUM':
-            return sum(values)
-        elif func == 'AVG':
-            return sum(values) / len(values)
-        elif func == 'MIN':
-            return min(values)
-        elif func == 'MAX':
-            return max(values)
+        try:
+            if func == 'SUM':
+                return sum(values)
+            elif func == 'AVG':
+                return sum(values) / len(values)
+            elif func == 'MIN':
+                return min(values)
+            elif func == 'MAX':
+                return max(values)
+        except TypeError as exc:
+            raise TypeMismatchError(column, 'number', type(values[0]).__name__) from exc
 
         return None
 
@@ -472,15 +518,26 @@ class QueryExecutor:
         results = []
 
         for _row_id, row in rows:
-            result = {}
+            result: dict[str, Any] = {}
+
+            # Bare output name -> qualifier that produced it, if any.
+            # Two tables both exposing `id` must not share one key.
+            written: dict[str, str | None] = {}
 
             for col in columns:
                 if col.name == '*':
-                    # Select all columns
+                    # Select all columns. Skip prefixed copies unless the
+                    # bare name already belongs to the other table.
                     for key, val in row.items():
-                        # Skip prefixed column names for clean output
                         if '.' not in key:
-                            result[key] = val
+                            _assign_output(result, written, key, val, None)
+                    for key, val in row.items():
+                        if '.' not in key:
+                            continue
+                        qualifier, bare = key.split('.', 1)
+                        same_source = written.get(bare) in (None, qualifier)
+                        if bare in result and (not same_source or result[bare] != val):
+                            _assign_output(result, written, bare, val, qualifier)
                 elif col.aggregate:
                     # Aggregates handled separately
                     pass
@@ -490,15 +547,19 @@ class QueryExecutor:
                     if col.table_alias:
                         prefixed = f'{col.table_alias}.{col_name}'
                         if prefixed in row:
-                            result[out_name] = row[prefixed]
+                            _assign_output(
+                                result, written, out_name, row[prefixed], None if col.alias else col.table_alias
+                            )
                             continue
                         if col_name in row:
-                            result[out_name] = row[col_name]
+                            _assign_output(
+                                result, written, out_name, row[col_name], None if col.alias else col.table_alias
+                            )
                             continue
                         raise ColumnNotFoundError(col_name, col.table_alias)
 
                     if col_name in row:
-                        result[out_name] = row[col_name]
+                        _assign_output(result, written, out_name, row[col_name], None)
                     else:
                         raise ColumnNotFoundError(col_name, table_name)
 

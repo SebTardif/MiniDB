@@ -523,6 +523,11 @@ class TestWhereClause:
         assert len(results) == 1
         assert results[0]['name'] == 'Diana'
 
+    def test_negative_limit_is_rejected(self, db):
+        """LIMIT -1 must not drop the last row via a Python slice."""
+        with pytest.raises(InvalidQueryError):
+            db.query('SELECT * FROM users ORDER BY id LIMIT -1')
+
     def test_order_by_unprojected_column(self, db):
         """ORDER BY a column that was not selected raises ColumnNotFoundError."""
         with pytest.raises(ColumnNotFoundError):
