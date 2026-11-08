@@ -5,7 +5,7 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from .errors import ColumnNotFoundError, InvalidQueryError, TableNotFoundError
+from .errors import ColumnNotFoundError, InvalidQueryError, TableNotFoundError, TypeMismatchError
 from .parser import (
     Condition,
     CreateTableQuery,
@@ -285,14 +285,18 @@ class QueryExecutor:
             result = value == cond_value
         elif op == '!=':
             result = value != cond_value
-        elif op == '>':
-            result = value > cond_value
-        elif op == '>=':
-            result = value >= cond_value
-        elif op == '<':
-            result = value < cond_value
-        elif op == '<=':
-            result = value <= cond_value
+        elif op in ('>', '>=', '<', '<='):
+            try:
+                if op == '>':
+                    result = value > cond_value
+                elif op == '>=':
+                    result = value >= cond_value
+                elif op == '<':
+                    result = value < cond_value
+                else:
+                    result = value <= cond_value
+            except TypeError as exc:
+                raise TypeMismatchError(condition.column, type(value).__name__, type(cond_value).__name__) from exc
         elif op == 'LIKE':
             result = self._match_like(str(value), str(cond_value))
         elif op == 'IN':

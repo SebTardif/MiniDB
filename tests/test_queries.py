@@ -129,6 +129,57 @@ class TestTypeValidation:
         results = db.query('SELECT age FROM t WHERE id = 1')
         assert results[0]['age'] == 30
 
+    def test_where_order_compare_incompatible_types_raises(self):
+        """Order comparisons of different types raise TypeMismatchError, not TypeError."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+
+        assert 'table_scan' in db.explain('SELECT * FROM users WHERE name > 5')
+        with pytest.raises(TypeMismatchError, match=r"column 'name'"):
+            db.query('SELECT * FROM users WHERE name > 5')
+
+        assert 'table_scan' in db.explain("SELECT * FROM users WHERE age > 'x'")
+        with pytest.raises(TypeMismatchError, match=r"column 'age'"):
+            db.query("SELECT * FROM users WHERE age > 'x'")
+
+        with pytest.raises(TypeMismatchError, match=r"column 'name'"):
+            db.query('SELECT * FROM users WHERE name < 5')
+        with pytest.raises(TypeMismatchError, match=r"column 'age'"):
+            db.query("SELECT * FROM users WHERE age <= 'x'")
+
+    def test_where_order_compare_on_primary_key_index_raises(self):
+        """Range lookup on an INTEGER primary key rejects a string bound."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+
+        assert 'index_range_scan' in db.explain("SELECT * FROM users WHERE id > 'x'")
+        with pytest.raises(TypeMismatchError, match=r"column 'id'"):
+            db.query("SELECT * FROM users WHERE id > 'x'")
+        with pytest.raises(TypeMismatchError, match=r"column 'id'"):
+            db.query("SELECT * FROM users WHERE id <= 'x'")
+
+    def test_where_equality_different_types_is_false(self):
+        """Equality of different types stays false and does not raise."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+
+        assert db.query('SELECT * FROM users WHERE name = 5') == []
+        assert db.query("SELECT * FROM users WHERE age = 'x'") == []
+        assert db.query("SELECT * FROM users WHERE id = 'x'") == []
+
+    def test_where_null_order_compare_is_false(self):
+        """NULL compared with an order operator stays false, not an error."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute('INSERT INTO users (id) VALUES (1)')
+
+        assert db.query("SELECT * FROM users WHERE name > 'a'") == []
+        assert db.query('SELECT * FROM users WHERE age >= 1') == []
+        assert db.query('SELECT * FROM users WHERE name < 5') == []
+
 
 class TestUnknownColumns:
     """Unknown column names must raise ColumnNotFoundError."""
