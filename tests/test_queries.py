@@ -234,6 +234,33 @@ class TestUnknownColumns:
         assert results[0]['id'] == 1
         assert results[0]['name'] == 'Alice'
 
+    def test_unknown_qualifier_does_not_read_the_bare_column(self, db):
+        """missing.name is not users.name, in WHERE, SELECT, or ORDER BY."""
+        with pytest.raises(ColumnNotFoundError):
+            db.query("SELECT id FROM users WHERE missing.name = 'Alice'")
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT missing.name FROM users')
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT * FROM users ORDER BY missing.name')
+        with pytest.raises(ColumnNotFoundError):
+            db.execute("UPDATE users SET name = 'Zed' WHERE missing.name = 'Alice'")
+
+        ordered = db.query('SELECT name FROM users ORDER BY users.name')
+        assert [row['name'] for row in ordered] == ['Alice', 'Bob']
+        assert db.query("SELECT name FROM users WHERE users.name = 'Alice'")[0]['name'] == 'Alice'
+
+    def test_qualifier_from_another_table_is_unknown(self, db):
+        """orders.name is unknown when orders is not part of this query."""
+        db.create_table(
+            'orders',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('name', ColumnType.STRING),
+            ],
+        )
+        with pytest.raises(ColumnNotFoundError):
+            db.query("SELECT id FROM users WHERE orders.name = 'Alice'")
+
     def test_left_join_null_right_column_is_not_unknown(self, db):
         """A NULL right-side column after LEFT JOIN is present, not missing."""
         db.create_table(
@@ -262,6 +289,99 @@ class TestUnknownColumns:
             WHERE orders.product = 'Widget'
         """)
         assert [r['name'] for r in matched] == ['Alice']
+
+        with pytest.raises(ColumnNotFoundError):
+            db.query("""
+                SELECT users.name
+                FROM users
+                LEFT JOIN orders ON users.id = orders.user_id
+                WHERE orders.name = 'Alice'
+            """)
+        with pytest.raises(ColumnNotFoundError):
+            db.query("""
+                SELECT users.name
+                FROM users
+                LEFT JOIN orders ON users.id = orders.user_id
+                WHERE missing.product = 'Widget'
+            """)
+        with pytest.raises(ColumnNotFoundError):
+            db.query("""
+                SELECT users.name
+                FROM users
+                LEFT JOIN orders ON users.id = orders.user_id
+                ORDER BY orders.name
+            """)
+        with pytest.raises(ColumnNotFoundError):
+            db.query("""
+                SELECT users.name, COUNT(*) AS n
+                FROM users
+                JOIN orders ON users.id = orders.user_id
+                GROUP BY name
+                HAVING orders.name = 'Alice'
+            """)
+
+    def test_empty_table_unknown_qualifier_is_still_an_error(self):
+        """SELECT missing.name on an empty table is still an unknown column."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT missing.name FROM users')
+
+
+class TestIndexedPredicate:
+    """An earlier non-index predicate must not empty an index probe."""
+
+    def test_leading_like_in_and_not_equal_keep_the_indexed_row(self):
+        """LIKE, IN, and != before = or >= still return the matching primary key."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (name STRING PRIMARY KEY)')
+        db.execute("INSERT INTO t (name) VALUES ('Alice')")
+        db.execute("INSERT INTO t (name) VALUES ('Bob')")
+
+        like_and_range = db.query("SELECT name FROM t WHERE name LIKE 'A%' AND name >= 'A' ORDER BY name")
+        assert [row['name'] for row in like_and_range] == ['Alice']
+
+        not_equal = db.query("SELECT name FROM t WHERE name != 'nope' AND name = 'Alice'")
+        assert [row['name'] for row in not_equal] == ['Alice']
+
+        in_list = db.query("SELECT name FROM t WHERE name IN ('Alice') AND name = 'Alice'")
+        assert [row['name'] for row in in_list] == ['Alice']
+
+        range_then_like = db.query("SELECT name FROM t WHERE name >= 'A' AND name LIKE 'A%' ORDER BY name")
+        assert [row['name'] for row in range_then_like] == ['Alice']
+
+        either = db.query("SELECT name FROM t WHERE (name = 'Bob' OR name = 'Alice') AND name = 'Alice'")
+        assert [row['name'] for row in either] == ['Alice']
+
+        ranged = db.query("SELECT name FROM t WHERE (name >= 'Z' OR name = 'Alice') AND name >= 'A'")
+        assert [row['name'] for row in ranged] == ['Alice']
+
+    def test_index_miss_still_rejects_an_unknown_column(self):
+        """A primary-key miss must not hide a qualifier or column that does not exist."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (name STRING PRIMARY KEY)')
+        db.execute("INSERT INTO t (name) VALUES ('Alice')")
+        with pytest.raises(ColumnNotFoundError):
+            db.query("SELECT name FROM t WHERE missing.name = 'Zoe'")
+        with pytest.raises(ColumnNotFoundError):
+            db.query("SELECT name FROM t WHERE missing.name = 'Alice'")
+
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT id FROM users WHERE id = 999 AND ghost = 1')
+        with pytest.raises(ColumnNotFoundError):
+            db.query("SELECT id FROM users WHERE id = 999 AND missing.name = 'Alice'")
+
+    def test_unindexed_like_and_range_still_filters(self):
+        """A non-indexed column still applies both LIKE and >=."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO t (id, name) VALUES (1, 'Ann')")
+        db.execute("INSERT INTO t (id, name) VALUES (2, 'Amy')")
+        db.execute("INSERT INTO t (id, name) VALUES (3, 'Bob')")
+        rows = db.query("SELECT name FROM t WHERE name LIKE 'A%' AND name >= 'A' ORDER BY name")
+        assert [row['name'] for row in rows] == ['Amy', 'Ann']
 
 
 class TestWhereClause:

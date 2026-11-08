@@ -17,7 +17,7 @@ from .parser import (
     parse_sql,
 )
 from .persistence import _deserialize, _serialize
-from .planner import QueryPlanner
+from .planner import QueryPlan, QueryPlanner, ScanType
 from .query import QueryExecutor
 from .table import Table
 from .types import QueryResult, Row
@@ -201,7 +201,7 @@ class MiniDB:
             params: Values for ? placeholders, bound before planning
 
         Returns:
-            String representation of the planned scan
+            String representation of the scan that runs
 
         Raises:
             MiniDBError: If the statement is not SELECT
@@ -213,6 +213,10 @@ class MiniDB:
             raise MiniDBError('explain() is SELECT-only')
         if query.table not in self._tables:
             raise TableNotFoundError(query.table)
+        # Joins nested-loop both sides. Do not report an index plan of the FROM table.
+        if query.joins:
+            estimated = self._tables[query.table].row_count
+            return str(QueryPlan(scan_type=ScanType.TABLE_SCAN, estimated_rows=estimated))
         return str(QueryPlanner(self._tables[query.table]).plan_select(query))
 
     def save(self, filepath: str) -> None:

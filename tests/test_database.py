@@ -260,6 +260,19 @@ class TestExplain:
         plan = db.explain('SELECT * FROM users WHERE id = ?', [1])
         assert 'index_scan' in plan
 
+    def test_explain_join_reports_the_scan_that_runs(self):
+        """A join scans both tables, even when WHERE names the FROM primary key."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, product STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO orders (id, user_id, product) VALUES (1, 1, 'Widget')")
+        sql = 'SELECT users.name FROM users JOIN orders ON users.id = orders.user_id WHERE users.id = 1'
+        plan = db.explain(sql)
+        assert 'index_scan' not in plan
+        assert 'table_scan' in plan
+        assert db.query(sql) == [{'name': 'Alice'}]
+
 
 class TestParameters:
     """Tests for ? placeholders bound after parse."""
@@ -311,6 +324,17 @@ class TestParameters:
         db.execute("INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 35)")
         results = db.query('SELECT name FROM users WHERE id IN (?, ?) ORDER BY name', [1, 3])
         assert [r['name'] for r in results] == ['Alice', 'Charlie']
+
+    def test_not_in_with_null_is_unknown(self, db):
+        """2 NOT IN (1, NULL) is unknown, so WHERE drops the row."""
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25)")
+        dropped = db.query('SELECT id FROM users WHERE NOT id IN (?, ?) ORDER BY id', [1, None])
+        assert dropped == []
+        kept = db.query('SELECT id FROM users WHERE NOT id IN (?, ?) ORDER BY id', [1, 3])
+        assert [row['id'] for row in kept] == [2]
+        matched = db.query('SELECT id FROM users WHERE id IN (?, ?) ORDER BY id', [1, None])
+        assert [row['id'] for row in matched] == [1]
 
     def test_too_few_params(self, db):
         """Fewer params than placeholders raises InvalidQueryError."""

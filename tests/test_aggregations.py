@@ -216,6 +216,22 @@ class TestAggregations:
         assert cat_counts['A'] == 3
         assert cat_counts['B'] == 3
 
+    def test_group_by_column_alias_is_the_output_key(self):
+        """SELECT dept AS department keeps department, not dept."""
+        db = MiniDB()
+        db.execute('CREATE TABLE g (id INTEGER PRIMARY KEY, dept STRING)')
+        db.execute("INSERT INTO g (id, dept) VALUES (1, 'a')")
+        db.execute("INSERT INTO g (id, dept) VALUES (2, 'a')")
+        results = db.query('SELECT dept AS department, COUNT(*) AS n FROM g GROUP BY dept')
+        assert results == [{'department': 'a', 'n': 2}]
+        filtered = db.query("SELECT dept AS department, COUNT(*) AS n FROM g GROUP BY dept HAVING dept = 'a'")
+        assert filtered == [{'department': 'a', 'n': 2}]
+        assert db.query("SELECT dept AS department FROM g GROUP BY dept HAVING dept = 'z'") == []
+        by_source = db.query('SELECT dept AS department, COUNT(*) AS n FROM g GROUP BY dept ORDER BY dept')
+        assert by_source == [{'department': 'a', 'n': 2}]
+        by_alias = db.query('SELECT dept AS department, COUNT(*) AS n FROM g GROUP BY dept ORDER BY department')
+        assert by_alias == [{'department': 'a', 'n': 2}]
+
     def test_having_after_where(self, db):
         """HAVING filters groups after WHERE has already dropped rows."""
         results = db.query("""
