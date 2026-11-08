@@ -1,0 +1,17 @@
+cache = true
+max_retries = 3
+retry_wait_time = 5
+
+exclude = [
+  "medium\\.com",
+  "linkedin\\.com",
+  "twitter\\.com",
+  "x\\.com",
+  "localhost",
+  "127\\.0\\.0\\.1",
+  "securityscorecards\\.dev",
+  "img\\.shields\\.io/endpoint",
+]
+
+# Gateway errors from GitHub under load. Retries alone still flake.
+accept = [200, 429, 502, 503, 504]

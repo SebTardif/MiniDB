@@ -3,9 +3,13 @@ name: CI
 on:
   # Recipe A: product tests on PR (and merge_group if a queue is added).
   # Do not compile again on push to main. Release publish stays in release.yml.
+  # ready_for_review re-runs CI when a draft is marked ready.
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   merge_group: {}
+  schedule:
+    - cron: "17 6 * * 1" # Monday, after the 06:00 security scan
   workflow_dispatch: {}
 
 concurrency:
@@ -16,8 +20,51 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    # Docs-only and draft pulls skip the test matrix. Schedule, dispatch,
+    # and merge_group skip this job, and downstream jobs then run.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'minidb/**'
+              - 'tests/**'
+              - 'scripts/**'
+              - 'pyproject.toml'
+              - 'main.py'
+              - '.github/actions/**'
+              - '.github/workflows/ci.yml'
+            workflows:
+              - '.github/workflows/**'
+              - '.github/actions/**'
+              - '.github/zizmor.yml'
+              - 'scripts/test_apply_release_notes.py'
+              - 'scripts/test_check_dco.py'
+              - 'scripts/test_report_scheduled_failure.py'
+              - 'scripts/test_workflow_triggers.py'
+
   lint:
     name: Lint & Format
+    needs: [changes]
+    if: >
+      always()
+      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (needs.changes.result == 'skipped' || needs.changes.outputs.code == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -42,15 +89,14 @@ jobs:
 
       - name: Ruff format check
         run: ruff format --check .
-      - name: Lock Recipe A and notes-branch apply
-        run: |
-          python3 scripts/test_apply_release_notes.py
-          python3 scripts/test_workflow_triggers.py
-          python3 scripts/test_check_dco.py
-          python3 scripts/test_report_scheduled_failure.py
 
   type-check:
     name: Type Check
+    needs: [changes]
+    if: >
+      always()
+      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (needs.changes.result == 'skipped' || needs.changes.outputs.code == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -75,6 +121,11 @@ jobs:
 
   test:
     name: Test (Python ${{ matrix.python-version }})
+    needs: [changes]
+    if: >
+      always()
+      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (needs.changes.result == 'skipped' || needs.changes.outputs.code == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -110,6 +161,11 @@ jobs:
 
   workflow-sanity:
     name: Workflow sanity
+    needs: [changes]
+    if: >
+      always()
+      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (needs.changes.result == 'skipped' || needs.changes.outputs.workflows == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -145,9 +201,16 @@ jobs:
       - name: zizmor
         run: zizmor --persona=regular --min-severity=medium .github/workflows .github/actions
 
+      - name: Lock Recipe A and notes-branch apply
+        run: |
+          python3 scripts/test_apply_release_notes.py
+          python3 scripts/test_workflow_triggers.py
+          python3 scripts/test_check_dco.py
+          python3 scripts/test_report_scheduled_failure.py
+
   ci:
     name: ci
-    needs: [lint, type-check, test, workflow-sanity]
+    needs: [changes, lint, type-check, test, workflow-sanity]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -159,16 +222,58 @@ jobs:
 
       - name: Gate
         env:
+          CHANGES: ${{ needs.changes.result }}
           LINT: ${{ needs.lint.result }}
           TYPE: ${{ needs.type-check.result }}
           TEST: ${{ needs.test.result }}
           SANITY: ${{ needs.workflow-sanity.result }}
         run: |
           set -euo pipefail
-          for result in "$LINT" "$TYPE" "$TEST" "$SANITY"; do
-            if [ "$result" != "success" ]; then
+          for result in "$CHANGES" "$LINT" "$TYPE" "$TEST" "$SANITY"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ] || [ "$result" = "abandoned" ]; then
               echo "Upstream job did not succeed: $result"
               exit 1
             fi
           done
           echo "ci gate passed"
+
+  report-failure:
+    name: Report CI failure
+    needs: [changes, lint, type-check, test, workflow-sanity]
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Open or close the failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ASSIGNEE: ${{ vars.NIGHTLY_FAILURE_ASSIGNEE || 'SebTardif' }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_RESULTS: >-
+            changes=${{ needs.changes.result }}
+            lint=${{ needs.lint.result }}
+            type-check=${{ needs.type-check.result }}
+            test=${{ needs.test.result }}
+            workflow-sanity=${{ needs.workflow-sanity.result }}
+        run: |
+          python3 scripts/report-scheduled-failure.py \
+            --prefix "CI red" \
+            --run-id "$RUN_ID" \
+            --run-url "$RUN_URL" \
+            --label nightly-failure \
+            --label ready

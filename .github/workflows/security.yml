@@ -18,17 +18,127 @@ permissions:
   contents: read
 
 jobs:
-  codeql:
-    name: CodeQL (${{ matrix.language }})
+  changes:
+    # Docs-only pulls skip the scanners. Push, schedule, dispatch, and
+    # merge_group skip this job, and the scanners then run.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'minidb/**'
+              - 'tests/**'
+              - 'scripts/**'
+              - 'pyproject.toml'
+              - 'main.py'
+              - '.github/**'
+
+  trivy:
+    name: Trivy
+    needs: [changes]
+    if: always() && (needs.changes.result == 'skipped' || needs.changes.outputs.code == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create isolated Docker config for Trivy
+        run: mkdir -p "$RUNNER_TEMP/trivy-docker"
+
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+        env:
+          TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
+          DOCKER_CONFIG: "${{ runner.temp }}/trivy-docker"
+
+  gitleaks:
+    name: Gitleaks
+    needs: [changes]
+    if: always() && (needs.changes.result == 'skipped' || needs.changes.outputs.code == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          archive="${RUNNER_TEMP}/gitleaks.tar.gz"
+          bindir="${RUNNER_TEMP}/gitleaks-bin"
+          mkdir -p "$bindir"
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64)  platform="linux_x64" ; sha="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb" ;;
+            Linux-aarch64) platform="linux_arm64" ; sha="e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080" ;;
+            Darwin-x86_64) platform="darwin_x64" ; sha="dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709" ;;
+            Darwin-arm64)  platform="darwin_arm64" ; sha="b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5" ;;
+            *) echo "Unsupported platform: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+          esac
+          curl --retry 5 --retry-all-errors --retry-delay 2 -sSfL \
+            -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_${platform}.tar.gz"
+          echo "${sha}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" -C "$bindir" gitleaks
+          printf '%s\n' "$bindir" >> "$GITHUB_PATH"
+
+      - name: Detect secrets
+        run: gitleaks detect --source . --exit-code 1
+
+  codeql-run:
+    name: CodeQL Run
+    needs: [changes]
+    if: always() && (needs.changes.result == 'skipped' || needs.changes.outputs.code == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      actions: read
       contents: read
       security-events: write
     strategy:
       fail-fast: false
       matrix:
         language: [python, actions]
+        include:
+          - language: actions
+            build-mode: none
+          - language: python
+            build-mode: none
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -44,15 +154,44 @@ jobs:
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
           queries: security-and-quality
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           category: "/language:${{ matrix.language }}"
+
+  codeql-gate:
+    # Same check names the ruleset requires. A docs-only skip still
+    # reports success. A failed paths filter does not.
+    name: "CodeQL (${{ matrix.language }})"
+    needs: [changes, codeql-run]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, actions]
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Gate
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          SCAN: ${{ needs.codeql-run.result }}
+        run: |
+          set -euo pipefail
+          for result in "$CHANGES" "$SCAN"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ] || [ "$result" = "abandoned" ]; then
+              echo "CodeQL did not succeed: $result"
+              exit 1
+            fi
+          done
 
   dependency-review:
     name: Dependency Review
@@ -75,7 +214,7 @@ jobs:
 
   report-failure:
     name: Report CodeQL failure
-    needs: [codeql, dependency-review]
+    needs: [changes, trivy, gitleaks, codeql-run, dependency-review]
     if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -100,10 +239,14 @@ jobs:
           ASSIGNEE: ${{ vars.NIGHTLY_FAILURE_ASSIGNEE || 'SebTardif' }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          JOB_RESULTS: codeql=${{ needs.codeql.result }} dependency-review=${{ needs.dependency-review.result }}
+          JOB_RESULTS: >-
+            trivy=${{ needs.trivy.result }}
+            gitleaks=${{ needs.gitleaks.result }}
+            codeql=${{ needs.codeql-run.result }}
+            dependency-review=${{ needs.dependency-review.result }}
         run: |
           python3 scripts/report-scheduled-failure.py \
-            --prefix "CodeQL red" \
+            --prefix "Security red" \
             --run-id "$RUN_ID" \
             --run-url "$RUN_URL" \
             --label nightly-failure \

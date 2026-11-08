@@ -64,9 +64,29 @@ class WorkflowTriggerTests(unittest.TestCase):
 
     def test_ci_gate_requires_workflow_sanity(self) -> None:
         text = (WORKFLOWS / 'ci.yml').read_text(encoding='utf-8')
+        on_block = _on_block(text)
         self.assertIn('name: ci', text)
         self.assertIn('name: Workflow sanity', text)
-        self.assertIn('needs: [lint, type-check, test, workflow-sanity]', text)
+        self.assertIn('needs: [changes, lint, type-check, test, workflow-sanity]', text)
+        self.assertIn('schedule:', on_block)
+        self.assertIn('ready_for_review', text)
+        self.assertIn('dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d', text)
+        self.assertNotIn('if [ "$result" != "success" ]', text)
+
+    def test_links_pull_request_has_no_path_filter(self) -> None:
+        text = (WORKFLOWS / 'links.yml').read_text(encoding='utf-8')
+        pull_request = text.split('pull_request:', 1)[1].split('schedule:', 1)[0]
+        self.assertNotIn('paths:', pull_request)
+        self.assertIn('name: Check Links', text)
+        self.assertIn('lychee.toml', text)
+
+    def test_security_keeps_required_codeql_names(self) -> None:
+        text = (WORKFLOWS / 'security.yml').read_text(encoding='utf-8')
+        self.assertIn('name: Gitleaks', text)
+        self.assertIn('name: Trivy', text)
+        self.assertIn('name: "CodeQL (${{ matrix.language }})"', text)
+        self.assertIn('name: Dependency Review', text)
+        self.assertNotIn('autobuild', text)
 
     def test_auto_approve_does_not_merge(self) -> None:
         text = (WORKFLOWS / 'auto-approve.yml').read_text(encoding='utf-8')
