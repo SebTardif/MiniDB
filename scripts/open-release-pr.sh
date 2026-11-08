@@ -2,6 +2,10 @@
 # Push the local semantic-release commit to a release branch and open a
 # pull request. main is protected, so the version bump cannot land there.
 # Merging the pull request is the release.
+#
+# The release branch is replaced on every run. It has to be the version
+# bump on top of current main. An older branch would drop later fixes
+# when the pull request is squash-merged.
 set -euo pipefail
 
 VERSION="${VERSION:-}"
@@ -22,18 +26,14 @@ BRANCH="chore/release-${VERSION}"
 echo "PLAN: release pull request ${BRANCH} on ${REPO}"
 
 if [ "${DRY_RUN}" = "1" ]; then
-  echo "DO: git push origin HEAD:refs/heads/${BRANCH}"
+  echo "DO: git push --force origin HEAD:refs/heads/${BRANCH}"
   echo "DO: gh pr create --repo ${REPO} --base main --head ${BRANCH} --title chore(release): v${VERSION}"
   echo "OK: dry run"
   exit 0
 fi
 
-if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
-  echo "OK: branch ${BRANCH} already exists"
-else
-  echo "DO: push ${BRANCH}"
-  git push origin "HEAD:refs/heads/${BRANCH}"
-fi
+echo "DO: push ${BRANCH}"
+git push --force origin "HEAD:refs/heads/${BRANCH}"
 
 existing="$(gh pr list --repo "${REPO}" --head "${BRANCH}" --base main --state open --json number --jq '.[0].number // empty')"
 if [ -n "${existing}" ]; then
