@@ -45,13 +45,14 @@ class OpenReleasePrTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding='utf-8')
         script = SCRIPT.read_text(encoding='utf-8')
         release_step = text.split('name: Python Semantic Release', 1)[1].split('name: Open release pull request', 1)[0]
-        self.assertIn('push: "false"', release_step)
-        self.assertIn('tag: "false"', release_step)
-        self.assertIn('vcs_release: "false"', release_step)
-        self.assertIn('build: "false"', release_step)
+        self.assertIn('--no-push', release_step)
+        self.assertIn('--no-tag', release_step)
+        self.assertIn('--no-vcs-release', release_step)
+        self.assertIn('--skip-build', release_step)
         self.assertIn('bash scripts/open-release-pr.sh', text)
         self.assertNotIn('HEAD:refs/heads/main', script)
         self.assertNotIn('git push origin main', script)
+        self.assertNotIn('git push origin HEAD:main', text)
 
 
 if __name__ == '__main__':
