@@ -170,105 +170,132 @@ class QueryExecutor:
         return rows
 
     def _execute_join(self, left_table: Table, query: SelectQuery) -> list[tuple[int, Row]]:
-        """Execute a JOIN query."""
+        """Execute a JOIN query.
 
-        # Get all rows from left table
-        left_rows = list(left_table.scan())
+        Each new table joins to every table already in the FROM list.
+        ON b.id still names b after a later table is joined.
+        """
+        left_rows = []
+        for row_id, row in left_table.scan():
+            merged = dict(row)
+            if query.table:
+                for col, val in row.items():
+                    merged[f'{query.table}.{col}'] = val
+            left_rows.append((row_id, merged))
 
+        seen = [query.table]
         for join in query.joins:
             if join.join_type == 'RIGHT':
                 raise InvalidQueryError('RIGHT JOIN is not supported; swap the tables and use LEFT JOIN')
-
             if join.table not in self.tables:
                 raise TableNotFoundError(join.table)
 
             right_table = self.tables[join.table]
-            right_rows = list(right_table.scan())
-
-            from_column, join_column = self._join_on_columns(query.table, join)
-            if not left_table.schema.has_column(from_column):
-                raise ColumnNotFoundError(from_column, query.table)
-            if not right_table.schema.has_column(join_column):
-                raise ColumnNotFoundError(join_column, join.table)
-
-            # Build index on JOIN table for the JOIN-side column
-            right_index = defaultdict(list)
-            for rid, row in right_rows:
-                key = row.get(join_column)
+            left_spec, right_column = self._resolve_join_pair(seen, join, right_table)
+            right_index: dict[Any, list[tuple[int, Row]]] = defaultdict(list)
+            for rid, row in right_table.scan():
+                key = row.get(right_column)
                 if key is not None:
                     right_index[key].append((rid, row))
 
-            # Perform nested loop join
             new_rows = []
             for left_id, left_row in left_rows:
-                left_key = left_row.get(from_column)
-                matches = right_index.get(left_key, [])
-
+                left_key = self._join_left_value(left_row, left_spec)
+                matches = right_index.get(left_key, []) if left_key is not None else []
                 if matches:
                     for _right_id, right_row in matches:
-                        # Merge rows with table prefixes
-                        merged = {}
-                        for col, val in left_row.items():
-                            merged[col] = val
-                            if query.table:
-                                merged[f'{query.table}.{col}'] = val
+                        merged = dict(left_row)
                         for col, val in right_row.items():
-                            if col not in merged:  # Don't overwrite left table columns
+                            if col not in merged:
                                 merged[col] = val
                             merged[f'{join.table}.{col}'] = val
                         new_rows.append((left_id, merged))
                 elif join.join_type == 'LEFT':
-                    merged = {}
-                    for col, val in left_row.items():
-                        merged[col] = val
-                        if query.table:
-                            merged[f'{query.table}.{col}'] = val
+                    merged = dict(left_row)
                     for col in right_table.columns:
                         if col not in merged:
                             merged[col] = None
                         merged[f'{join.table}.{col}'] = None
                     new_rows.append((left_id, merged))
-
+            seen.append(join.table)
             left_rows = new_rows
 
-        # Apply WHERE clause
         if query.where:
             known_tables = self._known_tables(query)
             left_rows = [(rid, row) for rid, row in left_rows if self._evaluate_where(row, query.where, known_tables)]
-
         return left_rows
 
-    def _join_on_columns(self, from_table: str, join: JoinClause) -> tuple[str, str]:
-        """Map ON operands to (FROM-side column, JOIN-side column)."""
-        known = {from_table, join.table}
+    def _resolve_join_pair(
+        self,
+        seen: list[str],
+        join: JoinClause,
+        right_table: Table,
+    ) -> tuple[tuple[str, str], str]:
+        """Return ((previous table, column), right-table column) for ON."""
 
-        def side_of(qualifier: str | None) -> str | None:
+        def classify(qualifier: str | None, column: str) -> tuple[str, str, str]:
             if qualifier is None:
-                return None
-            if qualifier not in known:
-                raise InvalidQueryError(f"unknown table qualifier '{qualifier}'")
-            return 'from' if qualifier == from_table else 'join'
+                return ('bare', '', column)
+            if qualifier == join.table:
+                if not right_table.schema.has_column(column):
+                    raise ColumnNotFoundError(column, join.table)
+                return ('right', qualifier, column)
+            if qualifier in seen:
+                table = self.tables.get(qualifier)
+                if table is None or not table.schema.has_column(column):
+                    raise ColumnNotFoundError(column, qualifier)
+                return ('left', qualifier, column)
+            raise InvalidQueryError(f"unknown table qualifier '{qualifier}'")
 
-        left_side = side_of(join.left_table)
-        right_side = side_of(join.right_table)
+        def resolve_bare(column: str) -> tuple[str, str, str]:
+            on_right = right_table.schema.has_column(column)
+            owners = [name for name in seen if name in self.tables and self.tables[name].schema.has_column(column)]
+            if on_right and owners:
+                raise InvalidQueryError(f"Column '{column}' is ambiguous")
+            if len(owners) > 1:
+                raise InvalidQueryError(f"Column '{column}' is ambiguous")
+            if on_right:
+                return ('right', join.table, column)
+            if len(owners) == 1:
+                return ('left', owners[0], column)
+            raise ColumnNotFoundError(column, join.table)
 
-        if left_side is None and right_side is None:
-            return join.left_column, join.right_column
+        # Unqualified ON keeps operand order: first column is already joined,
+        # second column is the new table. `ON id = user_id` is users.id even
+        # when the new table also has id.
+        if join.left_table is None and join.right_table is None:
+            owners = [
+                name for name in seen if name in self.tables and self.tables[name].schema.has_column(join.left_column)
+            ]
+            if len(owners) != 1:
+                raise InvalidQueryError(f"Column '{join.left_column}' is ambiguous")
+            if not right_table.schema.has_column(join.right_column):
+                raise ColumnNotFoundError(join.right_column, join.table)
+            return (owners[0], join.left_column), join.right_column
 
-        from_column: str | None = None
-        join_column: str | None = None
-        for side, column in ((left_side, join.left_column), (right_side, join.right_column)):
-            if side == 'from':
-                from_column = column
-            elif side == 'join':
-                join_column = column
+        sides = []
+        for qualifier, column in (
+            (join.left_table, join.left_column),
+            (join.right_table, join.right_column),
+        ):
+            kind, table, name = classify(qualifier, column)
+            if kind == 'bare':
+                kind, table, name = resolve_bare(name)
+            sides.append((kind, table, name))
 
-        if from_column is None:
-            from_column = join.right_column if join_column == join.left_column else join.left_column
-        if join_column is None:
-            join_column = join.right_column if from_column == join.left_column else join.left_column
+        lefts = [side for side in sides if side[0] == 'left']
+        rights = [side for side in sides if side[0] == 'right']
+        if len(lefts) != 1 or len(rights) != 1:
+            raise InvalidQueryError(f'JOIN {join.table} must compare that table to a table already in the FROM clause')
+        return (lefts[0][1], lefts[0][2]), rights[0][2]
 
-        return from_column, join_column
+    def _join_left_value(self, row: Row, spec: tuple[str, str]) -> Any:
+        """Read the already-joined side of an ON predicate."""
+        table, column = spec
+        prefixed = f'{table}.{column}'
+        if prefixed in row:
+            return row[prefixed]
+        return row.get(column)
 
     def _known_tables(self, query: SelectQuery) -> set[str]:
         """Table names this SELECT can qualify."""
@@ -393,22 +420,24 @@ class QueryExecutor:
             result = value is not None
         elif value is None:
             return False
-        elif op == '=':
-            result = value == cond_value
-        elif op == '!=':
-            result = value != cond_value
-        elif op in ('>', '>=', '<', '<='):
-            try:
-                if op == '>':
-                    result = value > cond_value
-                elif op == '>=':
-                    result = value >= cond_value
-                elif op == '<':
-                    result = value < cond_value
-                else:
-                    result = value <= cond_value
-            except TypeError as exc:
-                raise TypeMismatchError(condition.column, type(value).__name__, type(cond_value).__name__) from exc
+        elif op in ('=', '!=', '>', '>=', '<', '<='):
+            self._reject_mismatched_compare(condition.column, value, cond_value)
+            if op == '=':
+                result = value == cond_value
+            elif op == '!=':
+                result = value != cond_value
+            else:
+                try:
+                    if op == '>':
+                        result = value > cond_value
+                    elif op == '>=':
+                        result = value >= cond_value
+                    elif op == '<':
+                        result = value < cond_value
+                    else:
+                        result = value <= cond_value
+                except TypeError as exc:
+                    raise TypeMismatchError(condition.column, type(value).__name__, type(cond_value).__name__) from exc
         elif op == 'LIKE':
             result = self._match_like(str(value), str(cond_value))
         elif op == 'IN':
@@ -420,6 +449,9 @@ class QueryExecutor:
                 else:
                     return False
             else:
+                for item in cond_value:
+                    if item is not None:
+                        self._reject_mismatched_compare(condition.column, value, item)
                 result = value in cond_value
         else:
             return False
@@ -427,6 +459,17 @@ class QueryExecutor:
         if condition.negated:
             return not result
         return result
+
+    def _reject_mismatched_compare(self, column: str, left: Any, right: Any) -> None:
+        """Reject comparisons that Python would answer with a different type's rules.
+
+        True compares equal to 1. A boolean predicate must not match an integer
+        primary key, and an integer must not match a boolean column.
+        """
+        if isinstance(left, bool) or isinstance(right, bool):
+            if isinstance(left, bool) and isinstance(right, bool):
+                return
+            raise TypeMismatchError(column, type(left).__name__, type(right).__name__)
 
     def _match_like(self, value: str, pattern: str) -> bool:
         """Match a value against a LIKE pattern."""
@@ -443,6 +486,7 @@ class QueryExecutor:
                 regex_pattern += re.escape(char)
         regex_pattern += '$'
 
+        # LIKE stays case-insensitive. Equality stays case-sensitive.
         return bool(re.match(regex_pattern, value, re.IGNORECASE))
 
     def _deduplicate_rows(self, rows: list[Row]) -> list[Row]:
@@ -471,18 +515,86 @@ class QueryExecutor:
                 return True
         return False
 
+    def _column_owner_count(self, column: str, known: set[str]) -> int:
+        return sum(1 for name in known if name in self.tables and self.tables[name].schema.has_column(column))
+
+    def _require_group_column(self, spec: str, known: set[str], query: SelectQuery) -> None:
+        if '.' in spec:
+            table, column = spec.split('.', 1)
+            self._require_column(column, table, known, query.table)
+            return
+        if self._column_owner_count(spec, known) > 1:
+            raise InvalidQueryError(f"Column '{spec}' is ambiguous")
+        if not self._column_in_query_schema(spec, query):
+            raise ColumnNotFoundError(spec, query.table)
+
+    def _group_value(self, row: Row, spec: str, known: set[str]) -> Any:
+        if '.' in spec:
+            table, column = spec.split('.', 1)
+            return self._read_qualified_column(row, column, table, known)
+        owners = [name for name in known if name in self.tables and self.tables[name].schema.has_column(spec)]
+        if len(owners) == 1:
+            prefixed = f'{owners[0]}.{spec}'
+            if prefixed in row:
+                return row[prefixed]
+        return row.get(spec)
+
+    def _aggregate_label(self, col: SelectColumn) -> str:
+        if col.alias:
+            return col.alias
+        assert col.aggregate is not None
+        argument = col.aggregate.column
+        if col.table_alias:
+            argument = f'{col.table_alias}.{argument}'
+        return f'{col.aggregate.function}({argument})'
+
+    def _aggregate_cell(self, row: Row, column: str, table_alias: str | None, known: set[str]) -> Any:
+        if table_alias:
+            return self._read_qualified_column(row, column, table_alias, known)
+        owners = [name for name in known if name in self.tables and self.tables[name].schema.has_column(column)]
+        if len(owners) == 1:
+            prefixed = f'{owners[0]}.{column}'
+            if prefixed in row:
+                return row[prefixed]
+        return row.get(column)
+
+    def _bare_name_is_grouped(self, name: str, group_by: list[str]) -> bool:
+        for spec in group_by:
+            column = spec.split('.', 1)[1] if '.' in spec else spec
+            if column == name:
+                return True
+        return False
+
+    def _select_is_grouped(self, sel: SelectColumn, group_by: list[str]) -> bool:
+        for spec in group_by:
+            if '.' in spec:
+                table, column = spec.split('.', 1)
+                if sel.name == column and (sel.table_alias is None or sel.table_alias == table):
+                    return True
+            elif sel.name == spec:
+                return True
+        return False
+
+    def _grouped_select_value(self, row: Row, sel: SelectColumn, group_by: list[str], known: set[str]) -> Any:
+        for spec in group_by:
+            if '.' in spec:
+                table, column = spec.split('.', 1)
+                if sel.name == column and (sel.table_alias is None or sel.table_alias == table):
+                    return self._read_qualified_column(row, column, table, known)
+            elif sel.name == spec:
+                return self._group_value(row, spec, known)
+        return row.get(sel.name)
+
     def _execute_group_by(self, rows: list[tuple[int, Row]], query: SelectQuery) -> list[Row]:
         """Execute GROUP BY aggregation."""
-        sample = rows[0][1] if rows else None
-        for col in query.group_by:
-            in_row = sample is not None and col in sample
-            if not in_row and not self._column_in_query_schema(col, query):
-                raise ColumnNotFoundError(col, query.table)
+        known = self._known_tables(query)
+        for spec in query.group_by:
+            self._require_group_column(spec, known, query)
 
         groups = defaultdict(list)
 
         for _row_id, row in rows:
-            key = tuple(row.get(col) for col in query.group_by)
+            key = tuple(self._group_value(row, spec, known) for spec in query.group_by)
             groups[key].append(row)
 
         results = []
@@ -495,29 +607,37 @@ class QueryExecutor:
 
             # Add selected columns. A bare column or * that is not grouped
             # would otherwise keep one arbitrary value and hide the rest.
+            sample = group_rows[0]
             for sel_col in query.columns:
                 if sel_col.aggregate:
                     agg_value = self._compute_aggregate(
-                        sel_col.aggregate.function, sel_col.aggregate.column, group_rows, query
+                        sel_col.aggregate.function,
+                        sel_col.aggregate.column,
+                        group_rows,
+                        query,
+                        sel_col.table_alias,
                     )
-                    agg_name = sel_col.alias or f'{sel_col.aggregate.function}({sel_col.aggregate.column})'
+                    agg_name = self._aggregate_label(sel_col)
+                    if sel_col.alias and agg_name in result_row:
+                        raise InvalidQueryError(f"Duplicate column name '{sel_col.alias}'")
                     result_row[agg_name] = agg_value
                 elif sel_col.name == '*':
-                    if sample is not None:
-                        hidden = [key for key in sample if '.' not in key and key not in query.group_by]
-                        if hidden:
-                            raise InvalidQueryError(f'SELECT * with GROUP BY leaves {hidden[0]!r} ungrouped')
+                    hidden = [
+                        key for key in sample if '.' not in key and not self._bare_name_is_grouped(key, query.group_by)
+                    ]
+                    if hidden:
+                        raise InvalidQueryError(f'SELECT * with GROUP BY leaves {hidden[0]!r} ungrouped')
                     continue
-                elif sel_col.name not in query.group_by:
+                elif not self._select_is_grouped(sel_col, query.group_by):
+                    if sel_col.table_alias is None and self._column_owner_count(sel_col.name, known) > 1:
+                        raise InvalidQueryError(f"Column '{sel_col.name}' is ambiguous")
                     raise InvalidQueryError(f"Column '{sel_col.name}' must appear in GROUP BY or be aggregated")
                 else:
-                    if sel_col.name in result_row:
-                        value = result_row[sel_col.name]
-                    else:
-                        value = group_rows[0].get(sel_col.name)
-                        result_row[sel_col.name] = value
-                    if sel_col.alias:
-                        result_row[sel_col.alias] = value
+                    value = self._grouped_select_value(sample, sel_col, query.group_by, known)
+                    out_name = sel_col.alias or sel_col.name
+                    if sel_col.alias and out_name in result_row:
+                        raise InvalidQueryError(f"Duplicate column name '{sel_col.alias}'")
+                    result_row[out_name] = value
 
             for spec in self._having_aggregate_names(query.having):
                 if spec not in result_row:
@@ -554,10 +674,20 @@ class QueryExecutor:
                 alias_for[col.name] = col.alias
         keys: set[str] = set()
         for name in query.group_by:
-            keys.add(alias_for.get(name, name))
+            if '.' not in name:
+                keys.add(alias_for.get(name, name))
+                continue
+            table, column = name.split('.', 1)
+            shown = any(
+                col.name == column and (col.table_alias is None or col.table_alias == table)
+                for col in query.columns
+                if col.aggregate is None and col.name != '*'
+            )
+            if not shown:
+                keys.add(name)
         for col in query.columns:
             if col.aggregate:
-                keys.add(col.alias or f'{col.aggregate.function}({col.aggregate.column})')
+                keys.add(self._aggregate_label(col))
             elif col.name != '*':
                 keys.add(col.alias or col.name)
         return keys
@@ -575,8 +705,12 @@ class QueryExecutor:
 
         for col in query.columns:
             if col.aggregate:
-                agg_value = self._compute_aggregate(col.aggregate.function, col.aggregate.column, row_list, query)
-                agg_name = col.alias or f'{col.aggregate.function}({col.aggregate.column})'
+                agg_value = self._compute_aggregate(
+                    col.aggregate.function, col.aggregate.column, row_list, query, col.table_alias
+                )
+                agg_name = self._aggregate_label(col)
+                if col.alias and agg_name in result_row:
+                    raise InvalidQueryError(f"Duplicate column name '{col.alias}'")
                 result_row[agg_name] = agg_value
 
         for spec in self._having_aggregate_names(query.having):
@@ -586,17 +720,35 @@ class QueryExecutor:
 
         return [result_row] if result_row else []
 
-    def _compute_aggregate(self, func: str, column: str, rows: list[Row], query: SelectQuery) -> Any:
+    def _compute_aggregate(
+        self,
+        func: str,
+        column: str,
+        rows: list[Row],
+        query: SelectQuery,
+        table_alias: str | None = None,
+    ) -> Any:
         """Compute an aggregate function value."""
-        if column != '*' and not self._column_in_query_schema(column, query):
-            raise ColumnNotFoundError(column, query.table)
+        known = self._known_tables(query)
+        if table_alias is None and column not in ('*',) and '.' in column:
+            table_alias, column = column.split('.', 1)
+        if column != '*':
+            if table_alias:
+                self._require_column(column, table_alias, known, query.table)
+            elif not self._column_in_query_schema(column, query):
+                raise ColumnNotFoundError(column, query.table)
+            elif self._column_owner_count(column, known) > 1:
+                raise InvalidQueryError(f"Column '{column}' is ambiguous")
+
+        def cell(row: Row) -> Any:
+            return self._aggregate_cell(row, column, table_alias, known)
 
         if func == 'COUNT':
             if column == '*':
                 return len(rows)
-            return sum(1 for row in rows if row.get(column) is not None)
+            return sum(1 for row in rows if cell(row) is not None)
 
-        values: list[Any] = [v for row in rows if (v := row.get(column)) is not None]
+        values: list[Any] = [v for row in rows if (v := cell(row)) is not None]
 
         if not values:
             return None
@@ -634,6 +786,14 @@ class QueryExecutor:
 
             for col in columns:
                 if col.name == '*':
+                    if col.table_alias:
+                        source = self.tables.get(col.table_alias)
+                        if source is None:
+                            raise ColumnNotFoundError('*', col.table_alias)
+                        for schema_col in source.columns:
+                            value = self._read_qualified_column(row, schema_col, col.table_alias, known_tables)
+                            _assign_output(result, written, schema_col, value, col.table_alias)
+                        continue
                     # Select all columns. Skip prefixed copies unless the
                     # bare name already belongs to the other table.
                     for key, val in row.items():
@@ -652,6 +812,8 @@ class QueryExecutor:
                 else:
                     col_name = col.name
                     out_name = col.alias or col_name
+                    if col.alias and out_name in result:
+                        raise InvalidQueryError(f"Duplicate column name '{col.alias}'")
                     if col.table_alias:
                         value = self._read_qualified_column(row, col_name, col.table_alias, known_tables)
                         _assign_output(result, written, out_name, value, None if col.alias else col.table_alias)

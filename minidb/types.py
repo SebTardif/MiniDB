@@ -58,18 +58,36 @@ class ColumnType(Enum):
         try:
             if self == ColumnType.INTEGER:
                 if isinstance(value, bool):
+                    raise TypeError(f'Cannot cast {value!r} to INTEGER')
+                if isinstance(value, float):
+                    if not value.is_integer():
+                        raise TypeError(f'Cannot cast {value!r} to INTEGER')
                     return int(value)
+                if isinstance(value, int):
+                    return value
                 return int(value)
             elif self == ColumnType.STRING:
                 return str(value)
             elif self == ColumnType.FLOAT:
+                if isinstance(value, bool):
+                    raise TypeError(f'Cannot cast {value!r} to FLOAT')
                 return float(value)
             elif self == ColumnType.BOOLEAN:
                 if isinstance(value, bool):
                     return value
                 if isinstance(value, str):
-                    return value.lower() in ('true', '1', 'yes')
-                return bool(value)
+                    spelling = {
+                        'true': True,
+                        'false': False,
+                        '1': True,
+                        '0': False,
+                        'yes': True,
+                        'no': False,
+                    }
+                    if value.lower() not in spelling:
+                        raise TypeError(f'Cannot cast {value!r} to BOOLEAN')
+                    return spelling[value.lower()]
+                raise TypeError(f'Cannot cast {value!r} to BOOLEAN')
         except (ValueError, TypeError) as e:
             raise TypeError(f'Cannot cast {value!r} to {self.name}') from e
 

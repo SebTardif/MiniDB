@@ -310,6 +310,79 @@ class TestJoins:
         names = {r['name'] for r in results}
         assert names == {'Alice', 'Bob'}
 
+    def test_qualified_aggregate_uses_the_named_table(self):
+        """COUNT and SUM on a join read the qualified column, not the left bare name."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, total INTEGER)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+        db.execute("INSERT INTO users (id, name) VALUES (3, 'Zero')")
+        db.execute('INSERT INTO orders (id, user_id, total) VALUES (10, 1, 20)')
+        db.execute('INSERT INTO orders (id, user_id, total) VALUES (11, 1, 5)')
+        rows = db.query(
+            'SELECT users.name, COUNT(orders.id) AS n '
+            'FROM users LEFT JOIN orders ON users.id = orders.user_id '
+            'GROUP BY name ORDER BY name'
+        )
+        assert [(row['name'], row['n']) for row in rows] == [('Alice', 2), ('Bob', 0), ('Zero', 0)]
+
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING, total INTEGER)')
+        db.execute("INSERT INTO people (id, name, total) VALUES (1, 'Alice', 1000)")
+        db.execute("INSERT INTO people (id, name, total) VALUES (2, 'Bob', 2000)")
+        summed = db.query(
+            'SELECT people.name, SUM(orders.total) AS s '
+            'FROM people JOIN orders ON people.id = orders.user_id '
+            'GROUP BY name ORDER BY name'
+        )
+        assert [(row['name'], row['s']) for row in summed] == [('Alice', 25)]
+
+    def test_group_by_qualified_id_uses_that_table(self):
+        """GROUP BY orders.id does not bucket rows by users.id."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+        db.execute('INSERT INTO orders (id, user_id) VALUES (10, 1)')
+        db.execute('INSERT INTO orders (id, user_id) VALUES (11, 1)')
+        db.execute('INSERT INTO orders (id, user_id) VALUES (12, 2)')
+        rows = db.query(
+            'SELECT orders.id, COUNT(*) AS n FROM users '
+            'JOIN orders ON users.id = orders.user_id GROUP BY orders.id ORDER BY id'
+        )
+        assert [row['id'] for row in rows] == [10, 11, 12]
+        assert 'orders.id' not in rows[0]
+        with pytest.raises(InvalidQueryError, match='ambiguous'):
+            db.query('SELECT orders.id, COUNT(*) AS n FROM users JOIN orders ON users.id = orders.user_id GROUP BY id')
+
+    def test_star_of_one_table_omits_the_other(self):
+        """SELECT users.* does not return order columns, and orders.* keeps the order id."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, product STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO orders (id, user_id, product) VALUES (10, 1, 'Book')")
+        users = db.query('SELECT users.* FROM users JOIN orders ON users.id = orders.user_id WHERE orders.id = 10')
+        assert users == [{'id': 1, 'name': 'Alice'}]
+        orders = db.query('SELECT orders.* FROM users JOIN orders ON users.id = orders.user_id WHERE orders.id = 10')
+        assert orders == [{'id': 10, 'user_id': 1, 'product': 'Book'}]
+
+    def test_second_join_can_name_the_middle_table(self):
+        """A later ON clause can still read the middle table."""
+        db = MiniDB()
+        db.execute('CREATE TABLE a (id INTEGER PRIMARY KEY)')
+        db.execute('CREATE TABLE b (id INTEGER PRIMARY KEY, a_id INTEGER)')
+        db.execute('CREATE TABLE c (b_id INTEGER, label STRING)')
+        db.execute('INSERT INTO a (id) VALUES (1)')
+        db.execute('INSERT INTO b (id, a_id) VALUES (10, 1)')
+        db.execute("INSERT INTO c (b_id, label) VALUES (10, 'via-b')")
+        db.execute("INSERT INTO c (b_id, label) VALUES (1, 'via-a')")
+        rows = db.query('SELECT c.label FROM a JOIN b ON a.id = b.a_id JOIN c ON b.id = c.b_id')
+        assert rows == [{'label': 'via-b'}]
+        with pytest.raises(InvalidQueryError, match='ambiguous'):
+            db.query('SELECT c.label FROM a JOIN b ON a.id = b.a_id JOIN c ON id = b_id')
+
     def test_right_join_not_supported(self, db):
         """RIGHT JOIN raises; INNER and LEFT JOIN still work."""
         with pytest.raises(InvalidQueryError, match='RIGHT JOIN is not supported'):
