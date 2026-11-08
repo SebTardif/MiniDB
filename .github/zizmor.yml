@@ -1,0 +1,16 @@
+# pull_request_target is required for the token that can approve.
+# Those workflows do not check out the pull request head.
+rules:
+  bot-conditions:
+    ignore:
+      - auto-approve.yml
+      - dependabot-auto-merge.yml
+  dangerous-triggers:
+    ignore:
+      - dependabot-auto-merge.yml
+      - pr-title.yml
+  # Semantic Release pushes the tag and changelog. The checkout token
+  # has to stay available to later steps.
+  artipacked:
+    ignore:
+      - release.yml

@@ -45,6 +45,11 @@ for automatic versioning via semantic-release.
 Allowed prefixes: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`,
 `test`, `build`, `ci`, `chore`, `revert`.
 
+Every commit also needs a `Signed-off-by` trailer. Use `git commit -s`.
+The sign-off email is the address from `git config user.email`. CI
+rejects a missing sign-off, an `anthropic.com` co-author, and a
+`Claude-Session` trailer.
+
 Examples:
 - `feat: add DISTINCT keyword support`
 - `fix: handle NULL in ORDER BY correctly`

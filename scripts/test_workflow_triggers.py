@@ -53,6 +53,39 @@ class WorkflowTriggerTests(unittest.TestCase):
         self.assertIn('version-update:semver-major', text)
         self.assertIn('timeout-minutes: 5', text)
 
+    def test_dco_and_security_cover_merge_group(self) -> None:
+        dco = (WORKFLOWS / 'dco.yml').read_text(encoding='utf-8')
+        security = (WORKFLOWS / 'security.yml').read_text(encoding='utf-8')
+        self.assertIn('merge_group:', _on_block(dco))
+        self.assertIn('name: DCO Sign-off', dco)
+        self.assertIn('bash scripts/check-dco.sh', dco)
+        self.assertIn('merge_group:', _on_block(security))
+        self.assertIn('CodeQL (${{ matrix.language }})', security)
+
+    def test_ci_gate_requires_workflow_sanity(self) -> None:
+        text = (WORKFLOWS / 'ci.yml').read_text(encoding='utf-8')
+        self.assertIn('name: ci', text)
+        self.assertIn('name: Workflow sanity', text)
+        self.assertIn('needs: [lint, type-check, test, workflow-sanity]', text)
+
+    def test_auto_approve_does_not_merge(self) -> None:
+        text = (WORKFLOWS / 'auto-approve.yml').read_text(encoding='utf-8')
+        self.assertNotIn('gh pr merge', text)
+        self.assertIn("github.actor == 'SebTardif'", text)
+
+    def test_actions_are_pinned(self) -> None:
+        roots = [WORKFLOWS, ROOT / '.github' / 'actions']
+        for root in roots:
+            for path in root.rglob('*.yml'):
+                for line_number, line in enumerate(path.read_text(encoding='utf-8').splitlines(), start=1):
+                    if 'uses:' not in line or '@' not in line:
+                        continue
+                    self.assertRegex(
+                        line,
+                        r'@[0-9a-f]{40}\b',
+                        f'{path}:{line_number} is not pinned to a commit',
+                    )
+
 
 if __name__ == '__main__':
     unittest.main()
