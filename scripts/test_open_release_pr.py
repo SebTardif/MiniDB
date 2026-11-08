@@ -36,7 +36,7 @@ class OpenReleasePrTests(unittest.TestCase):
     def test_dry_run_pushes_a_release_branch(self) -> None:
         result = run_script({'VERSION': '1.2.3', 'GH_REPO': 'SebTardif/MiniDB', 'DRY_RUN': '1'})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('HEAD:refs/heads/chore/release-1.2.3', result.stdout)
+        self.assertIn('git push --force origin HEAD:refs/heads/chore/release-1.2.3', result.stdout)
         self.assertIn('chore(release): v1.2.3', result.stdout)
         self.assertNotIn('refs/heads/main', result.stdout)
         self.assertIn('OK: dry run', result.stdout)
