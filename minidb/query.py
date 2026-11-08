@@ -5,7 +5,7 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from .errors import ColumnNotFoundError, InvalidQueryError, TableNotFoundError
+from .errors import ColumnNotFoundError, InvalidQueryError, TableNotFoundError, TypeMismatchError
 from .parser import (
     Condition,
     CreateTableQuery,
@@ -22,6 +22,32 @@ from .parser import (
 from .planner import QueryPlanner, ScanType
 from .table import Table
 from .types import QueryResult, Row
+
+
+def _assign_output(
+    result: dict[str, Any],
+    written: dict[str, str | None],
+    out_name: str,
+    value: Any,
+    qualifier: str | None,
+) -> None:
+    """Store a projected value. A second column with the same bare name gets a qualifier."""
+    if out_name not in result:
+        result[out_name] = value
+        written[out_name] = qualifier
+        return
+    previous = written.get(out_name)
+    if previous == qualifier:
+        result[out_name] = value
+        return
+    if previous:
+        result[f'{previous}.{out_name}'] = result.pop(out_name)
+        written.pop(out_name, None)
+    if qualifier:
+        result[f'{qualifier}.{out_name}'] = value
+    else:
+        result[out_name] = value
+        written[out_name] = None
 
 
 class QueryExecutor:
@@ -56,6 +82,11 @@ class QueryExecutor:
             raise TableNotFoundError(query.table)
 
         main_table = self.tables[query.table]
+        known_tables = self._known_tables(query)
+        for join in query.joins:
+            if join.table not in self.tables:
+                raise TableNotFoundError(join.table)
+        self._reject_unknown_query_columns(query, known_tables)
 
         # Get rows based on query plan (indexed rows with row IDs)
         if query.joins:
@@ -64,31 +95,43 @@ class QueryExecutor:
             indexed_rows = self._execute_table_scan(main_table, query)
 
         # Apply GROUP BY
+        ordered_source = False
         if query.group_by:
             result_rows = self._execute_group_by(indexed_rows, query)
         elif self._has_aggregates(query.columns):
             # Aggregate without GROUP BY - aggregate all rows
             result_rows = self._execute_aggregation(indexed_rows, query)
         else:
-            # Project columns
-            result_rows = self._project_columns(indexed_rows, query.columns, query.table)
+            # Sort source rows first so ORDER BY can name a column that
+            # the SELECT list does not return.
+            if query.order_by:
+                if query.distinct:
+                    self._reject_distinct_order_by(query)
+                indexed_rows = self._sort_indexed_rows(indexed_rows, query, known_tables)
+                ordered_source = True
+            result_rows = self._project_columns(indexed_rows, query.columns, query.table, known_tables)
 
         if query.having:
             if not query.group_by and not self._has_aggregates(query.columns):
                 raise InvalidQueryError('HAVING requires GROUP BY or aggregate functions')
-            result_rows = [row for row in result_rows if self._evaluate_where(row, query.having)]
-            keep = self._selected_output_keys(query)
-            result_rows = [{key: value for key, value in row.items() if key in keep} for row in result_rows]
+            result_rows = [row for row in result_rows if self._evaluate_where(row, query.having, known_tables)]
 
         if query.distinct:
             result_rows = self._deduplicate_rows(result_rows)
 
-        # Apply ORDER BY
-        if query.order_by:
-            result_rows = self._execute_order_by(result_rows, query.order_by)
+        # Grouped rows still carry the group key and the alias. Plain
+        # selects were already ordered from the source rows.
+        if query.order_by and not ordered_source:
+            result_rows = self._execute_order_by(result_rows, query.order_by, known_tables)
 
-        # Apply LIMIT
+        if query.group_by or query.having or self._has_aggregates(query.columns):
+            keep = self._selected_output_keys(query)
+            result_rows = [{key: value for key, value in row.items() if key in keep} for row in result_rows]
+
+        # Apply LIMIT. A negative slice would drop rows from the end.
         if query.limit is not None:
+            if query.limit < 0:
+                raise InvalidQueryError('LIMIT must be zero or positive')
             result_rows = result_rows[: query.limit]
 
         return result_rows
@@ -97,39 +140,38 @@ class QueryExecutor:
         """Execute a table scan with optional WHERE filtering."""
         planner = QueryPlanner(table)
         plan = planner.plan_select(query)
+        known_tables = self._known_tables(query)
+        rows: list[tuple[int, Row]] = []
+        used_index = False
 
-        rows = []
-
+        # Only an operator this scan can apply may probe the index.
+        # A leading LIKE, IN, or != must not hide a later comparison.
         if plan.scan_type == ScanType.INDEX_SCAN and plan.index_column is not None and query.where is not None:
-            # Use index for equality lookup
             index = table.get_index(plan.index_column)
-            condition = self._find_index_condition(query.where, plan.index_column)
-            if condition:
-                row_ids = index.lookup(condition.value)
-                for row_id in row_ids:
+            condition = self._find_index_condition(query.where, plan.index_column, ('=',))
+            if index is not None and condition is not None:
+                used_index = True
+                for row_id in index.lookup(condition.value):
                     row = table.get_row_by_id(row_id)
                     if row:
                         rows.append((row_id, row))
         elif plan.scan_type == ScanType.INDEX_RANGE_SCAN and plan.index_column is not None and query.where is not None:
-            # Use index for range scan
             index = table.get_index(plan.index_column)
-            condition = self._find_index_condition(query.where, plan.index_column)
-            if condition:
-                row_ids = index.range_lookup(condition.operator, condition.value)
-                for row_id in row_ids:
+            condition = self._find_index_condition(query.where, plan.index_column, ('<', '<=', '>', '>='))
+            if index is not None and condition is not None:
+                used_index = True
+                for row_id in index.range_lookup(condition.operator, condition.value):
                     row = table.get_row_by_id(row_id)
                     if row:
                         rows.append((row_id, row))
-        else:
-            # Full table scan
+
+        if not used_index:
             for row_id, row in table.scan():
-                if query.where and not self._evaluate_where(row, query.where):
+                if query.where and not self._evaluate_where(row, query.where, known_tables):
                     continue
                 rows.append((row_id, row))
-
-        # Apply remaining WHERE conditions (for index scans)
-        if query.where and plan.scan_type in (ScanType.INDEX_SCAN, ScanType.INDEX_RANGE_SCAN):
-            rows = [(rid, row) for rid, row in rows if self._evaluate_where(row, query.where)]
+        elif query.where:
+            rows = [(rid, row) for rid, row in rows if self._evaluate_where(row, query.where, known_tables)]
 
         return rows
 
@@ -197,7 +239,8 @@ class QueryExecutor:
 
         # Apply WHERE clause
         if query.where:
-            left_rows = [(rid, row) for rid, row in left_rows if self._evaluate_where(row, query.where)]
+            known_tables = self._known_tables(query)
+            left_rows = [(rid, row) for rid, row in left_rows if self._evaluate_where(row, query.where, known_tables)]
 
         return left_rows
 
@@ -233,45 +276,120 @@ class QueryExecutor:
 
         return from_column, join_column
 
-    def _find_index_condition(self, where: WhereClause, column: str) -> Condition | None:
-        """Find the condition that uses the index column."""
+    def _known_tables(self, query: SelectQuery) -> set[str]:
+        """Table names this SELECT can qualify."""
+        names = {query.table}
+        for join in query.joins:
+            names.add(join.table)
+        return names
+
+    def _find_index_condition(self, where: WhereClause, column: str, operators: tuple[str, ...]) -> Condition | None:
+        """Find a top-level predicate on column whose operator this scan can apply.
+
+        Nested OR arms are not probes. The planner only indexes a top-level
+        AND conjunct, and the first nested equality is a different predicate.
+        """
         if not where:
             return None
 
         for cond in where.conditions:
-            if isinstance(cond, Condition) and cond.column == column and not cond.negated:
+            if (
+                isinstance(cond, Condition)
+                and cond.column == column
+                and not cond.negated
+                and cond.operator in operators
+            ):
                 return cond
 
         return None
 
-    def _evaluate_where(self, row: Row, where: WhereClause) -> bool:
+    def _require_column(
+        self,
+        column: str,
+        table_alias: str | None,
+        known_tables: set[str],
+        fallback_table: str,
+    ) -> None:
+        """Raise when a qualifier or bare name is not a column of this query."""
+        if table_alias:
+            if table_alias not in known_tables:
+                raise ColumnNotFoundError(column, table_alias)
+            table = self.tables.get(table_alias)
+            if table is None or not table.schema.has_column(column):
+                raise ColumnNotFoundError(column, table_alias)
+            return
+        if not any(self.tables[name].schema.has_column(column) for name in known_tables if name in self.tables):
+            raise ColumnNotFoundError(column, fallback_table)
+
+    def _reject_unknown_where(self, where: WhereClause | None, known_tables: set[str], fallback_table: str) -> None:
+        """Name check for WHERE. An empty index hit must not hide a bad column."""
+        if where is None:
+            return
+        for cond in where.conditions:
+            if isinstance(cond, WhereClause):
+                self._reject_unknown_where(cond, known_tables, fallback_table)
+            elif isinstance(cond, Condition):
+                self._require_column(cond.column, cond.table_alias, known_tables, fallback_table)
+
+    def _reject_unknown_query_columns(self, query: SelectQuery, known_tables: set[str]) -> None:
+        """Reject unknown SELECT, WHERE, and qualified ORDER BY names before scanning."""
+        for col in query.columns:
+            if col.aggregate or col.name == '*':
+                continue
+            self._require_column(col.name, col.table_alias, known_tables, query.table)
+        self._reject_unknown_where(query.where, known_tables, query.table)
+        for item in query.order_by:
+            if item.table_alias:
+                self._require_column(item.column, item.table_alias, known_tables, query.table)
+
+    def _read_qualified_column(
+        self,
+        row: Row,
+        column: str,
+        table_alias: str | None,
+        known_tables: set[str] | None,
+    ) -> Any:
+        """Read a source-row column.
+
+        A qualifier that is not a table in this query, or a column that
+        table does not have, is missing even when the bare name exists.
+        A real qualifier on an unprefixed single-table row still reads
+        the bare value.
+        """
+        if table_alias:
+            if known_tables is not None and (
+                table_alias not in known_tables
+                or table_alias not in self.tables
+                or not self.tables[table_alias].schema.has_column(column)
+            ):
+                raise ColumnNotFoundError(column, table_alias)
+            prefixed = f'{table_alias}.{column}'
+            if prefixed in row:
+                return row[prefixed]
+            if any('.' in key for key in row):
+                raise ColumnNotFoundError(column, table_alias)
+        if column not in row:
+            raise ColumnNotFoundError(column, table_alias)
+        return row[column]
+
+    def _evaluate_where(self, row: Row, where: WhereClause, known_tables: set[str] | None = None) -> bool:
         """Evaluate a WHERE clause against a row."""
         results = []
 
         for cond in where.conditions:
             if isinstance(cond, Condition):
-                results.append(self._evaluate_condition(row, cond))
+                results.append(self._evaluate_condition(row, cond, known_tables))
             elif isinstance(cond, WhereClause):
-                results.append(self._evaluate_where(row, cond))
+                results.append(self._evaluate_where(row, cond, known_tables))
 
         if where.operator == 'AND':
             return all(results)
         else:  # OR
             return any(results)
 
-    def _evaluate_condition(self, row: Row, condition: Condition) -> bool:
+    def _evaluate_condition(self, row: Row, condition: Condition, known_tables: set[str] | None = None) -> bool:
         """Evaluate a single condition against a row."""
-        # Try with table prefix first
-        col_name = condition.column
-        if condition.table_alias:
-            prefixed = f'{condition.table_alias}.{col_name}'
-            if prefixed in row:
-                col_name = prefixed
-
-        if col_name not in row:
-            raise ColumnNotFoundError(condition.column, condition.table_alias)
-
-        value = row[col_name]
+        value = self._read_qualified_column(row, condition.column, condition.table_alias, known_tables)
         cond_value = condition.value
         op = condition.operator
 
@@ -285,18 +403,30 @@ class QueryExecutor:
             result = value == cond_value
         elif op == '!=':
             result = value != cond_value
-        elif op == '>':
-            result = value > cond_value
-        elif op == '>=':
-            result = value >= cond_value
-        elif op == '<':
-            result = value < cond_value
-        elif op == '<=':
-            result = value <= cond_value
+        elif op in ('>', '>=', '<', '<='):
+            try:
+                if op == '>':
+                    result = value > cond_value
+                elif op == '>=':
+                    result = value >= cond_value
+                elif op == '<':
+                    result = value < cond_value
+                else:
+                    result = value <= cond_value
+            except TypeError as exc:
+                raise TypeMismatchError(condition.column, type(value).__name__, type(cond_value).__name__) from exc
         elif op == 'LIKE':
             result = self._match_like(str(value), str(cond_value))
         elif op == 'IN':
-            result = value in cond_value
+            # NULL in the list makes the comparison unknown. WHERE drops unknown,
+            # including NOT IN, instead of using Python membership.
+            if isinstance(cond_value, (list, tuple)) and any(item is None for item in cond_value):
+                if any(item is not None and value == item for item in cond_value):
+                    result = True
+                else:
+                    return False
+            else:
+                result = value in cond_value
         else:
             return False
 
@@ -369,7 +499,8 @@ class QueryExecutor:
             for i, group_col in enumerate(query.group_by):
                 result_row[group_col] = key[i]
 
-            # Add aggregate columns
+            # Add selected columns. A bare column or * that is not grouped
+            # would otherwise keep one arbitrary value and hide the rest.
             for sel_col in query.columns:
                 if sel_col.aggregate:
                     agg_value = self._compute_aggregate(
@@ -377,8 +508,22 @@ class QueryExecutor:
                     )
                     agg_name = sel_col.alias or f'{sel_col.aggregate.function}({sel_col.aggregate.column})'
                     result_row[agg_name] = agg_value
-                elif sel_col.name not in result_row and sel_col.name != '*':
-                    result_row[sel_col.name] = group_rows[0].get(sel_col.name)
+                elif sel_col.name == '*':
+                    if sample is not None:
+                        hidden = [key for key in sample if '.' not in key and key not in query.group_by]
+                        if hidden:
+                            raise InvalidQueryError(f'SELECT * with GROUP BY leaves {hidden[0]!r} ungrouped')
+                    continue
+                elif sel_col.name not in query.group_by:
+                    raise InvalidQueryError(f"Column '{sel_col.name}' must appear in GROUP BY or be aggregated")
+                else:
+                    if sel_col.name in result_row:
+                        value = result_row[sel_col.name]
+                    else:
+                        value = group_rows[0].get(sel_col.name)
+                        result_row[sel_col.name] = value
+                    if sel_col.alias:
+                        result_row[sel_col.alias] = value
 
             for spec in self._having_aggregate_names(query.having):
                 if spec not in result_row:
@@ -409,16 +554,28 @@ class QueryExecutor:
 
     def _selected_output_keys(self, query: SelectQuery) -> set[str]:
         """Keys that belong in the user-visible SELECT output."""
-        keys = set(query.group_by)
+        alias_for: dict[str, str] = {}
+        for col in query.columns:
+            if col.alias and not col.aggregate and col.name != '*':
+                alias_for[col.name] = col.alias
+        keys: set[str] = set()
+        for name in query.group_by:
+            keys.add(alias_for.get(name, name))
         for col in query.columns:
             if col.aggregate:
                 keys.add(col.alias or f'{col.aggregate.function}({col.aggregate.column})')
             elif col.name != '*':
-                keys.add(col.name)
+                keys.add(col.alias or col.name)
         return keys
 
     def _execute_aggregation(self, rows: list[tuple[int, Row]], query: SelectQuery) -> list[Row]:
         """Execute aggregation without GROUP BY."""
+        bare = [col.name for col in query.columns if not col.aggregate and col.name != '*']
+        if bare:
+            raise InvalidQueryError(f"Column '{bare[0]}' must appear in GROUP BY or be aggregated")
+        if any(col.name == '*' and not col.aggregate for col in query.columns):
+            raise InvalidQueryError('SELECT * cannot be combined with aggregates without GROUP BY')
+
         row_list = [row for _, row in rows]
         result_row = {}
 
@@ -450,33 +607,51 @@ class QueryExecutor:
         if not values:
             return None
 
-        if func == 'SUM':
-            return sum(values)
-        elif func == 'AVG':
-            return sum(values) / len(values)
-        elif func == 'MIN':
-            return min(values)
-        elif func == 'MAX':
-            return max(values)
+        try:
+            if func == 'SUM':
+                return sum(values)
+            elif func == 'AVG':
+                return sum(values) / len(values)
+            elif func == 'MIN':
+                return min(values)
+            elif func == 'MAX':
+                return max(values)
+        except TypeError as exc:
+            raise TypeMismatchError(column, 'number', type(values[0]).__name__) from exc
 
         return None
 
     def _project_columns(
-        self, rows: list[tuple[int, Row]], columns: list[SelectColumn], table_name: str | None = None
+        self,
+        rows: list[tuple[int, Row]],
+        columns: list[SelectColumn],
+        table_name: str | None = None,
+        known_tables: set[str] | None = None,
     ) -> list[Row]:
         """Project selected columns from rows."""
         results = []
 
         for _row_id, row in rows:
-            result = {}
+            result: dict[str, Any] = {}
+
+            # Bare output name -> qualifier that produced it, if any.
+            # Two tables both exposing `id` must not share one key.
+            written: dict[str, str | None] = {}
 
             for col in columns:
                 if col.name == '*':
-                    # Select all columns
+                    # Select all columns. Skip prefixed copies unless the
+                    # bare name already belongs to the other table.
                     for key, val in row.items():
-                        # Skip prefixed column names for clean output
                         if '.' not in key:
-                            result[key] = val
+                            _assign_output(result, written, key, val, None)
+                    for key, val in row.items():
+                        if '.' not in key:
+                            continue
+                        qualifier, bare = key.split('.', 1)
+                        same_source = written.get(bare) in (None, qualifier)
+                        if bare in result and (not same_source or result[bare] != val):
+                            _assign_output(result, written, bare, val, qualifier)
                 elif col.aggregate:
                     # Aggregates handled separately
                     pass
@@ -484,17 +659,12 @@ class QueryExecutor:
                     col_name = col.name
                     out_name = col.alias or col_name
                     if col.table_alias:
-                        prefixed = f'{col.table_alias}.{col_name}'
-                        if prefixed in row:
-                            result[out_name] = row[prefixed]
-                            continue
-                        if col_name in row:
-                            result[out_name] = row[col_name]
-                            continue
-                        raise ColumnNotFoundError(col_name, col.table_alias)
+                        value = self._read_qualified_column(row, col_name, col.table_alias, known_tables)
+                        _assign_output(result, written, out_name, value, None if col.alias else col.table_alias)
+                        continue
 
                     if col_name in row:
-                        result[out_name] = row[col_name]
+                        _assign_output(result, written, out_name, row[col_name], None)
                     else:
                         raise ColumnNotFoundError(col_name, table_name)
 
@@ -502,8 +672,57 @@ class QueryExecutor:
 
         return results
 
-    def _execute_order_by(self, rows: list[Row], order_by: list[OrderByItem]) -> list[Row]:
+    def _reject_distinct_order_by(self, query: SelectQuery) -> None:
+        """DISTINCT keeps one output row. A hidden sort key would pick which one."""
+        if any(col.name == '*' and col.aggregate is None for col in query.columns):
+            return
+        visible: set[str] = set()
+        for col in query.columns:
+            if col.aggregate is not None:
+                function = col.aggregate.function
+                argument = col.aggregate.column
+                visible.add(col.alias or f'{function}({argument})')
+                continue
+            visible.add(col.alias or col.name)
+        for item in query.order_by:
+            if item.column not in visible:
+                raise InvalidQueryError(f'ORDER BY {item.column} must appear in the SELECT list when DISTINCT is used')
+
+    def _sort_indexed_rows(
+        self,
+        rows: list[tuple[int, Row]],
+        query: SelectQuery,
+        known_tables: set[str],
+    ) -> list[tuple[int, Row]]:
+        """Order source rows, including columns the SELECT list omits."""
+        views: list[Row] = []
+        paired: list[tuple[Row, tuple[int, Row]]] = []
+        for indexed in rows:
+            _row_id, row = indexed
+            view = dict(row)
+            for col in query.columns:
+                if col.alias is None or col.aggregate is not None or col.name == '*':
+                    continue
+                if col.table_alias:
+                    view[col.alias] = self._read_qualified_column(row, col.name, col.table_alias, known_tables)
+                elif col.name in row:
+                    view[col.alias] = row[col.name]
+            views.append(view)
+            paired.append((view, indexed))
+        ordered = self._execute_order_by(views, query.order_by, known_tables)
+        by_identity = {id(view): indexed for view, indexed in paired}
+        return [by_identity[id(view)] for view in ordered]
+
+    def _execute_order_by(
+        self,
+        rows: list[Row],
+        order_by: list[OrderByItem],
+        known_tables: set[str] | None = None,
+    ) -> list[Row]:
         """Sort rows by ORDER BY columns with per-column direction."""
+        for item in order_by:
+            if item.table_alias and known_tables is not None:
+                self._require_column(item.column, item.table_alias, known_tables, item.table_alias)
         if rows:
             sample = rows[0]
             for item in order_by:
@@ -514,14 +733,17 @@ class QueryExecutor:
                 elif item.column not in sample:
                     raise ColumnNotFoundError(item.column)
 
+        def _order_value(row: Row, item: OrderByItem) -> Any:
+            if item.table_alias:
+                prefixed = f'{item.table_alias}.{item.column}'
+                if prefixed in row:
+                    return row[prefixed]
+            return row.get(item.column)
+
         def _compare_rows(a: Row, b: Row) -> int:
             for item in order_by:
-                col_name = item.column
-                if item.table_alias:
-                    col_name = f'{item.table_alias}.{item.column}'
-
-                val_a = a.get(col_name, a.get(item.column))
-                val_b = b.get(col_name, b.get(item.column))
+                val_a = _order_value(a, item)
+                val_b = _order_value(b, item)
 
                 # NULLs sort last regardless of direction
                 if val_a is None and val_b is None:
@@ -578,9 +800,11 @@ class QueryExecutor:
         table = self.tables[query.table]
 
         # Find matching rows
+        known_tables = {query.table}
+        self._reject_unknown_where(query.where, known_tables, query.table)
         row_ids = set()
         for row_id, row in table.scan():
-            if query.where and not self._evaluate_where(row, query.where):
+            if query.where and not self._evaluate_where(row, query.where, known_tables):
                 continue
             row_ids.add(row_id)
 
@@ -595,9 +819,11 @@ class QueryExecutor:
         table = self.tables[query.table]
 
         # Find matching rows
+        known_tables = {query.table}
+        self._reject_unknown_where(query.where, known_tables, query.table)
         row_ids = set()
         for row_id, row in table.scan():
-            if query.where and not self._evaluate_where(row, query.where):
+            if query.where and not self._evaluate_where(row, query.where, known_tables):
                 continue
             row_ids.add(row_id)
 

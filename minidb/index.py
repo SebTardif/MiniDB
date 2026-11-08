@@ -4,6 +4,8 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from typing import Any
 
+from .errors import TypeMismatchError
+
 
 @dataclass
 class HashIndex:
@@ -78,28 +80,31 @@ class HashIndex:
         Returns:
             Set of row IDs matching the condition
         """
-        result = set()
-
-        if op == '<':
-            # All keys less than value
-            pos = bisect_left(self._sorted_keys, value)
-            for key in self._sorted_keys[:pos]:
-                result.update(self._index[key])
-        elif op == '<=':
-            # All keys less than or equal to value
-            pos = bisect_right(self._sorted_keys, value)
-            for key in self._sorted_keys[:pos]:
-                result.update(self._index[key])
-        elif op == '>':
-            # All keys greater than value
-            pos = bisect_right(self._sorted_keys, value)
-            for key in self._sorted_keys[pos:]:
-                result.update(self._index[key])
-        elif op == '>=':
-            # All keys greater than or equal to value
-            pos = bisect_left(self._sorted_keys, value)
-            for key in self._sorted_keys[pos:]:
-                result.update(self._index[key])
+        result: set[int] = set()
+        try:
+            if op == '<':
+                # All keys less than value
+                pos = bisect_left(self._sorted_keys, value)
+                for key in self._sorted_keys[:pos]:
+                    result.update(self._index[key])
+            elif op == '<=':
+                # All keys less than or equal to value
+                pos = bisect_right(self._sorted_keys, value)
+                for key in self._sorted_keys[:pos]:
+                    result.update(self._index[key])
+            elif op == '>':
+                # All keys greater than value
+                pos = bisect_right(self._sorted_keys, value)
+                for key in self._sorted_keys[pos:]:
+                    result.update(self._index[key])
+            elif op == '>=':
+                # All keys greater than or equal to value
+                pos = bisect_left(self._sorted_keys, value)
+                for key in self._sorted_keys[pos:]:
+                    result.update(self._index[key])
+        except TypeError as exc:
+            expected = type(self._sorted_keys[0]).__name__ if self._sorted_keys else 'unknown'
+            raise TypeMismatchError(self.column_name, expected, type(value).__name__) from exc
 
         return result
 

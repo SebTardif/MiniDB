@@ -2,7 +2,18 @@
 
 import pytest
 
-from minidb import Column, ColumnType, InvalidQueryError, MiniDB, QueryExecutor, TableExistsError, TableNotFoundError
+from minidb import (
+    Column,
+    ColumnError,
+    ColumnType,
+    DuplicateKeyError,
+    InvalidQueryError,
+    MiniDB,
+    QueryExecutor,
+    Schema,
+    TableExistsError,
+    TableNotFoundError,
+)
 from minidb.parser import parse_sql
 
 
@@ -55,6 +66,51 @@ class TestDatabaseLifecycle:
         assert 'products' in db
         table = db.get_table('products')
         assert table.primary_key == 'id'
+
+    def test_sql_rejects_second_primary_key(self):
+        """CREATE TABLE with two PRIMARY KEY columns raises ColumnError."""
+        db = MiniDB()
+        with pytest.raises(ColumnError) as exc_info:
+            db.execute('CREATE TABLE t (a INTEGER PRIMARY KEY, b INTEGER PRIMARY KEY)')
+        message = str(exc_info.value)
+        assert 'a' in message
+        assert 'b' in message
+        assert 't' not in db
+
+    def test_schema_rejects_second_primary_key(self):
+        """A Schema built with two primary key columns raises ColumnError."""
+        with pytest.raises(ColumnError) as exc_info:
+            Schema(
+                columns=[
+                    Column('a', ColumnType.INTEGER, primary_key=True),
+                    Column('b', ColumnType.INTEGER, primary_key=True),
+                ]
+            )
+        message = str(exc_info.value)
+        assert 'a' in message
+        assert 'b' in message
+
+    def test_add_column_rejects_second_primary_key(self):
+        """Adding a second primary key column raises ColumnError and changes nothing."""
+        schema = Schema(columns=[Column('a', ColumnType.INTEGER, primary_key=True)])
+        with pytest.raises(ColumnError) as exc_info:
+            schema.add_column(Column('b', ColumnType.INTEGER, primary_key=True))
+        message = str(exc_info.value)
+        assert 'a' in message
+        assert 'b' in message
+        assert schema.primary_key == 'a'
+        assert schema.column_names == ['a']
+
+    def test_single_primary_key_rejects_duplicate_insert(self):
+        """One PRIMARY KEY still rejects a duplicate key and allows a repeated non-key."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (a INTEGER PRIMARY KEY, b INTEGER)')
+        db.execute('INSERT INTO t (a, b) VALUES (1, 10)')
+        with pytest.raises(DuplicateKeyError):
+            db.execute('INSERT INTO t (a, b) VALUES (1, 11)')
+        db.execute('INSERT INTO t (a, b) VALUES (2, 10)')
+        rows = db.query('SELECT a, b FROM t ORDER BY a')
+        assert rows == [{'a': 1, 'b': 10}, {'a': 2, 'b': 10}]
 
     def test_query_executor_create_table_points_at_minidb_execute(self):
         """QueryExecutor CREATE TABLE tells the caller to use MiniDB.execute()."""
@@ -204,6 +260,19 @@ class TestExplain:
         plan = db.explain('SELECT * FROM users WHERE id = ?', [1])
         assert 'index_scan' in plan
 
+    def test_explain_join_reports_the_scan_that_runs(self):
+        """A join scans both tables, even when WHERE names the FROM primary key."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, product STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO orders (id, user_id, product) VALUES (1, 1, 'Widget')")
+        sql = 'SELECT users.name FROM users JOIN orders ON users.id = orders.user_id WHERE users.id = 1'
+        plan = db.explain(sql)
+        assert 'index_scan' not in plan
+        assert 'table_scan' in plan
+        assert db.query(sql) == [{'name': 'Alice'}]
+
 
 class TestParameters:
     """Tests for ? placeholders bound after parse."""
@@ -255,6 +324,17 @@ class TestParameters:
         db.execute("INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 35)")
         results = db.query('SELECT name FROM users WHERE id IN (?, ?) ORDER BY name', [1, 3])
         assert [r['name'] for r in results] == ['Alice', 'Charlie']
+
+    def test_not_in_with_null_is_unknown(self, db):
+        """2 NOT IN (1, NULL) is unknown, so WHERE drops the row."""
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25)")
+        dropped = db.query('SELECT id FROM users WHERE NOT id IN (?, ?) ORDER BY id', [1, None])
+        assert dropped == []
+        kept = db.query('SELECT id FROM users WHERE NOT id IN (?, ?) ORDER BY id', [1, 3])
+        assert [row['id'] for row in kept] == [2]
+        matched = db.query('SELECT id FROM users WHERE id IN (?, ?) ORDER BY id', [1, None])
+        assert [row['id'] for row in matched] == [1]
 
     def test_too_few_params(self, db):
         """Fewer params than placeholders raises InvalidQueryError."""

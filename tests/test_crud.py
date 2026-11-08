@@ -133,6 +133,17 @@ class TestCRUD:
         assert results[1]['id'] == 2
         assert results[1]['name'] == 'Bob'
 
+    def test_update_primary_key_conflict_rolls_back(self, db):
+        """A multi-row primary key collision does not keep the first write."""
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (2, 'Bob', 25, 45000.0, false)")
+
+        with pytest.raises(DuplicateKeyError):
+            db.execute('UPDATE users SET id = 3')
+
+        results = db.query('SELECT id, name FROM users ORDER BY id')
+        assert [(row['id'], row['name']) for row in results] == [(1, 'Alice'), (2, 'Bob')]
+
     def test_update_primary_key_same_row_noop(self, db):
         """Setting a primary key to its current value is a no-op success."""
         db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")

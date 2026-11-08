@@ -1,6 +1,9 @@
 """Tests for indexing and query planning."""
 
+import pytest
+
 from minidb import Column, ColumnType, HashIndex, MiniDB
+from minidb.errors import TypeMismatchError
 from minidb.planner import QueryPlanner, ScanType
 
 
@@ -66,6 +69,24 @@ class TestIndexing:
 
         # Test greater than or equal
         assert index.range_lookup('>=', 5) == {5, 6, 7, 8, 9}
+
+    def test_range_lookup_incompatible_type_raises(self):
+        """Bisect on sorted keys must raise TypeMismatchError, not TypeError."""
+        index = HashIndex(column_name='id')
+        index.insert(1, 0)
+        index.insert(3, 1)
+
+        with pytest.raises(TypeMismatchError, match=r"column 'id'"):
+            index.range_lookup('>', 'x')
+        with pytest.raises(TypeMismatchError, match=r"column 'id'"):
+            index.range_lookup('<', 'x')
+        with pytest.raises(TypeMismatchError, match=r"column 'id'"):
+            index.range_lookup('>=', 'x')
+        with pytest.raises(TypeMismatchError, match=r"column 'id'"):
+            index.range_lookup('<=', 'x')
+
+        assert index.range_lookup('>', 1) == {1}
+        assert index.range_lookup('<', 2) == {0}
 
     def test_query_planner_uses_index(self):
         """Test that the query planner chooses index scan for PK lookups."""
