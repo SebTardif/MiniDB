@@ -45,19 +45,28 @@ jobs:
 
       # main requires a pull request. Commit locally, then open
       # chore/release-<version>. Tag and publish only after that merges.
+      # The v10 action errors with "commit_sha" unset when push and tag
+      # are false, so the CLI commits locally and this job opens the PR.
       - name: Python Semantic Release
         id: release
         if: github.event_name != 'push' || !startsWith(github.event.head_commit.message || '', 'chore(release):')
-        uses: python-semantic-release/python-semantic-release@b700dbeb1f431a0fcc30a79f3f0869407fe07278 # v10
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          commit: "true"
-          push: "false"
-          tag: "false"
-          vcs_release: "false"
-          build: "false"
-          git_committer_name: github-actions[bot]
-          git_committer_email: 41898282+github-actions[bot]@users.noreply.github.com
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pip install "python-semantic-release==10.7.0"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          before="$(git rev-parse HEAD)"
+          semantic-release -v version --commit --no-tag --no-push --no-vcs-release --skip-build
+          after="$(git rev-parse HEAD)"
+          version="$(python3 -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])')"
+          if [ "$before" != "$after" ]; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Open release pull request
         if: steps.release.outputs.released == 'true'
