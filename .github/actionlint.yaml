@@ -1,0 +1,3 @@
+# GitHub-hosted runners only. Custom labels belong here if that changes.
+self-hosted-runner:
+  labels: []

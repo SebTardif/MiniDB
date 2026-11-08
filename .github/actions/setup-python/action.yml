@@ -1,0 +1,15 @@
+name: Setup Python
+description: Install the Python version used by CI and release jobs.
+
+inputs:
+  python-version:
+    description: CPython version to install
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+      with:
+        python-version: ${{ inputs.python-version }}
