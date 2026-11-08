@@ -702,7 +702,8 @@ class Parser:
                     table_alias = agg_col
                     agg_col = self._expect(TokenType.IDENTIFIER).value
             self._expect(TokenType.RPAREN)
-            column = f'{func}({agg_col})'
+            shown = f'{table_alias}.{agg_col}' if table_alias else agg_col
+            column = f'{func}({shown})'
         elif self._match(TokenType.DOT):
             self._advance()
             table_alias = column
@@ -797,10 +798,14 @@ class Parser:
             raise SyntaxError_(f'Expected literal value, got {token.type.name}', token.position)
 
     def _parse_group_by(self) -> list[str]:
-        """Parse GROUP BY columns."""
+        """Parse GROUP BY columns. A qualifier is kept as 'table.column'."""
         columns = []
         while True:
-            columns.append(self._expect(TokenType.IDENTIFIER).value)
+            name = self._expect(TokenType.IDENTIFIER).value
+            if self._match(TokenType.DOT):
+                self._advance()
+                name = f'{name}.{self._expect(TokenType.IDENTIFIER).value}'
+            columns.append(name)
             if not self._match(TokenType.COMMA):
                 break
             self._advance()

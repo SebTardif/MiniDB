@@ -118,6 +118,40 @@ class TestTypeValidation:
         db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, age INTEGER)')
         with pytest.raises(TypeMismatchError):
             db.execute("INSERT INTO t (id, age) VALUES (1, 'not-a-number')")
+        with pytest.raises(TypeMismatchError):
+            db.execute('INSERT INTO t (id, age) VALUES (1, 1.9)')
+        db.execute('INSERT INTO t (id, age) VALUES (2, 2.0)')
+        assert db.query('SELECT age FROM t WHERE id = 2') == [{'age': 2}]
+
+    def test_boolean_rejects_non_booleans(self):
+        """A BOOLEAN column does not treat 'bob' as false or 2 as true."""
+        db = MiniDB()
+        db.execute('CREATE TABLE flags (id INTEGER PRIMARY KEY, f BOOLEAN)')
+        with pytest.raises(TypeMismatchError):
+            db.execute("INSERT INTO flags (id, f) VALUES (1, 'bob')")
+        with pytest.raises(TypeMismatchError):
+            db.execute('INSERT INTO flags (id, f) VALUES (2, 2)')
+        db.execute("INSERT INTO flags (id, f) VALUES (3, 'false')")
+        assert db.query('SELECT f FROM flags') == [{'f': False}]
+
+    def test_integer_does_not_equal_boolean(self):
+        """id = true is a type error. Python would treat true as 1."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING, active BOOLEAN)')
+        db.execute("INSERT INTO users (id, name, active) VALUES (1, 'Alice', true)")
+        db.execute("INSERT INTO users (id, name, active) VALUES (0, 'Zero', false)")
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT name FROM users WHERE id = true')
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT name FROM users WHERE active = 1')
+
+    def test_duplicate_select_alias_is_rejected(self):
+        """Two outputs named label do not drop the first value."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+        with pytest.raises(InvalidQueryError, match='label'):
+            db.query('SELECT name AS label, age AS label FROM users')
 
     def test_update_type_mismatch(self):
         """UPDATE of a non-castable value raises TypeMismatchError."""

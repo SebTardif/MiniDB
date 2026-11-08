@@ -1,10 +1,21 @@
 """Hash-based index implementation for MiniDB."""
 
+import math
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from typing import Any
 
 from .errors import TypeMismatchError
+
+# NaN is not equal to itself, so it cannot be a dict key as a float.
+_NAN = object()
+
+
+def _index_key(value: Any) -> Any:
+    """Map NaN to one key so a second NaN primary key is a duplicate."""
+    if isinstance(value, float) and math.isnan(value):
+        return _NAN
+    return value
 
 
 @dataclass
@@ -28,11 +39,13 @@ class HashIndex:
             value: The indexed value
             row_id: The row ID to associate with this value
         """
-        if value not in self._index:
-            self._index[value] = set()
-            # Maintain sorted keys for range queries
-            self._insert_sorted_key(value)
-        self._index[value].add(row_id)
+        key = _index_key(value)
+        if key not in self._index:
+            self._index[key] = set()
+            # NaN is not ordered. Equality still sees it via _NAN.
+            if key is not _NAN:
+                self._insert_sorted_key(value)
+        self._index[key].add(row_id)
 
     def _insert_sorted_key(self, value: Any) -> None:
         """Insert a key into the sorted keys list."""
@@ -48,14 +61,15 @@ class HashIndex:
             value: The indexed value
             row_id: The row ID to remove
         """
-        if value in self._index:
-            self._index[value].discard(row_id)
-            if not self._index[value]:
-                del self._index[value]
-                # Remove from sorted keys
-                pos = bisect_left(self._sorted_keys, value)
-                if pos < len(self._sorted_keys) and self._sorted_keys[pos] == value:
-                    self._sorted_keys.pop(pos)
+        key = _index_key(value)
+        if key in self._index:
+            self._index[key].discard(row_id)
+            if not self._index[key]:
+                del self._index[key]
+                if key is not _NAN:
+                    pos = bisect_left(self._sorted_keys, value)
+                    if pos < len(self._sorted_keys) and self._sorted_keys[pos] == value:
+                        self._sorted_keys.pop(pos)
 
     def lookup(self, value: Any) -> set[int]:
         """
@@ -67,7 +81,7 @@ class HashIndex:
         Returns:
             Set of row IDs, empty if value not found
         """
-        return self._index.get(value, set()).copy()
+        return self._index.get(_index_key(value), set()).copy()
 
     def range_lookup(self, op: str, value: Any) -> set[int]:
         """
@@ -110,7 +124,7 @@ class HashIndex:
 
     def has_value(self, value: Any) -> bool:
         """Check if a value exists in the index."""
-        return value in self._index
+        return _index_key(value) in self._index
 
     def clear(self) -> None:
         """Clear all entries from the index."""

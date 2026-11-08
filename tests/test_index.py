@@ -3,12 +3,21 @@
 import pytest
 
 from minidb import Column, ColumnType, HashIndex, MiniDB
-from minidb.errors import TypeMismatchError
+from minidb.errors import DuplicateKeyError, TypeMismatchError
 from minidb.planner import QueryPlanner, ScanType
 
 
 class TestIndexing:
     """Tests for index functionality."""
+
+    def test_nan_primary_key_is_not_inserted_twice(self):
+        """NaN is not equal to itself, but it is still one primary key."""
+        db = MiniDB()
+        db.execute('CREATE TABLE nans (id FLOAT PRIMARY KEY, v STRING)')
+        db.execute('INSERT INTO nans (id, v) VALUES (?, ?)', [float('nan'), 'a'])
+        with pytest.raises(DuplicateKeyError):
+            db.execute('INSERT INTO nans (id, v) VALUES (?, ?)', [float('nan'), 'b'])
+        assert db.query('SELECT v FROM nans') == [{'v': 'a'}]
 
     def test_primary_key_index_created(self):
         """Test that an index is automatically created for primary keys."""
