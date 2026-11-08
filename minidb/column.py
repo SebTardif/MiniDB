@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from .errors import NullValueError, TypeMismatchError
+from .errors import ColumnError, NullValueError, TypeMismatchError
 from .types import ColumnType
 
 
@@ -89,16 +89,18 @@ class Schema:
     def _rebuild_indexes(self):
         """Rebuild internal indexes for fast lookups."""
         self._column_map = {col.name: col for col in self.columns}
-        self._primary_key = None
-        for col in self.columns:
-            if col.primary_key:
-                self._primary_key = col.name
-                break
+        primary_keys = [col.name for col in self.columns if col.primary_key]
+        if len(primary_keys) > 1:
+            quoted = ', '.join(f"'{name}'" for name in primary_keys)
+            raise ColumnError(f'Multiple PRIMARY KEY columns: {quoted}')
+        self._primary_key = primary_keys[0] if primary_keys else None
 
     def add_column(self, column: Column) -> None:
         """Add a column to the schema."""
         if column.name in self._column_map:
             raise ValueError(f"Column '{column.name}' already exists")
+        if column.primary_key and self._primary_key is not None:
+            raise ColumnError(f"Multiple PRIMARY KEY columns: '{self._primary_key}', '{column.name}'")
         self.columns.append(column)
         self._column_map[column.name] = column
         if column.primary_key:

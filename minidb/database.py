@@ -82,6 +82,7 @@ class MiniDB:
 
         Raises:
             TableExistsError: If table already exists
+            ColumnError: If more than one column is a primary key
         """
         if name in self._tables:
             raise TableExistsError(name)
