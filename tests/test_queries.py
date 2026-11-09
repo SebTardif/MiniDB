@@ -34,6 +34,17 @@ class TestParserErrors:
         with pytest.raises(SyntaxError_):
             db.execute('')
 
+    def test_where_parentheses_have_a_depth_limit(self):
+        """Hundreds of nested WHERE parentheses raise SyntaxError_, not RecursionError."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (n INTEGER)')
+        db.execute('INSERT INTO t (n) VALUES (1)')
+        modest = 'SELECT n FROM t WHERE ' + ('(' * 8) + 'n = 1' + (')' * 8)
+        assert db.query(modest) == [{'n': 1}]
+        deep = 'SELECT n FROM t WHERE ' + ('(' * 101) + 'n = 1' + (')' * 101)
+        with pytest.raises(SyntaxError_, match='Parentheses nested more than 100 levels'):
+            db.query(deep)
+
     def test_having_after_select_is_rejected(self):
         """HAVING without GROUP BY or SELECT aggregates raises InvalidQueryError."""
         db = MiniDB()

@@ -393,6 +393,7 @@ class Parser:
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens
         self.pos = 0
+        self._paren_depth = 0
 
     def parse(
         self,
@@ -688,8 +689,17 @@ class Parser:
     def _parse_predicate(self) -> Condition | WhereClause:
         """Parse a parenthesized clause or a single condition."""
         if self._match(TokenType.LPAREN):
+            # Each pair recurses through OR and AND. Past this depth the
+            # call stack raises RecursionError instead of a SQL error.
+            if self._paren_depth >= 100:
+                token = self.tokens[self.pos]
+                raise SyntaxError_('Parentheses nested more than 100 levels', token.position)
             self._advance()
-            clause = self._parse_or()
+            self._paren_depth += 1
+            try:
+                clause = self._parse_or()
+            finally:
+                self._paren_depth -= 1
             self._expect(TokenType.RPAREN)
             return clause
         return self._parse_condition()
