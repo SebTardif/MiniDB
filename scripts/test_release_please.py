@@ -22,8 +22,14 @@ class ReleasePleaseTests(unittest.TestCase):
         self.assertIs(package['include-component-in-tag'], False)
         paths = [item['path'] for item in package['extra-files']]
         self.assertIn('minidb_sql/__init__.py', paths)
+        sections = {item['type']: item for item in package['changelog-sections']}
+        self.assertNotIn('hidden', sections['feat'])
+        self.assertNotIn('hidden', sections['fix'])
+        self.assertTrue(sections['docs']['hidden'])
+        self.assertTrue(sections['ci']['hidden'])
+        self.assertTrue(sections['chore']['hidden'])
         manifest = json.loads(MANIFEST.read_text(encoding='utf-8'))
-        self.assertEqual(manifest['.'], '1.2.0')
+        self.assertEqual(manifest['.'], '1.3.0')
 
     def test_workflow_uses_one_release_please_pull(self) -> None:
         text = WORKFLOW.read_text(encoding='utf-8')
