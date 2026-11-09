@@ -34,6 +34,17 @@ class TestParserErrors:
         with pytest.raises(SyntaxError_):
             db.execute('')
 
+    def test_sql_comments_are_skipped(self):
+        """Line and block comments match the README examples."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, name STRING, n INTEGER)')
+        db.execute("INSERT INTO t (id, name, n) VALUES (1, 'a', -3)")
+        assert db.query("SELECT name FROM t WHERE name = 'a' -- tail") == [{'name': 'a'}]
+        assert db.query('SELECT name FROM t /* mid */ WHERE id = 1') == [{'name': 'a'}]
+        assert db.query('SELECT n FROM t WHERE n = -3') == [{'n': -3}]
+        with pytest.raises(SyntaxError_, match='Unterminated block comment'):
+            db.query('SELECT name FROM t /* oops WHERE id = 1')
+
     def test_where_parentheses_have_a_depth_limit(self):
         """Hundreds of nested WHERE parentheses raise SyntaxError_, not RecursionError."""
         db = MiniDB()

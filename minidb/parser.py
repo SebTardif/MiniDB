@@ -290,11 +290,32 @@ class Lexer:
             elif char == '?':
                 self.tokens.append(Token(TokenType.PLACEHOLDER, '?', self.pos))
                 self.pos += 1
+            elif char == '-' and self.pos + 1 < len(self.sql) and self.sql[self.pos + 1] == '-':
+                self._skip_line_comment()
+            elif char == '/' and self.pos + 1 < len(self.sql) and self.sql[self.pos + 1] == '*':
+                self._skip_block_comment()
             else:
                 raise SyntaxError_(f"Unexpected character: '{char}'", self.pos)
 
         self.tokens.append(Token(TokenType.EOF, None, self.pos))
         return self.tokens
+
+    def _skip_line_comment(self) -> None:
+        """Skip a -- comment through the end of the line."""
+        self.pos += 2
+        while self.pos < len(self.sql) and self.sql[self.pos] not in '\n\r':
+            self.pos += 1
+
+    def _skip_block_comment(self) -> None:
+        """Skip a /* */ comment. An unclosed comment is a syntax error."""
+        start = self.pos
+        self.pos += 2
+        while self.pos + 1 < len(self.sql):
+            if self.sql[self.pos] == '*' and self.sql[self.pos + 1] == '/':
+                self.pos += 2
+                return
+            self.pos += 1
+        raise SyntaxError_('Unterminated block comment', start)
 
     def _skip_whitespace(self):
         """Skip whitespace characters."""
