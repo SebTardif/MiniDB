@@ -200,6 +200,21 @@ class TestPersistence:
         finally:
             os.unlink(filepath)
 
+    def test_load_rejects_non_utf8(self):
+        """A file that is not UTF-8 is a read error, not UnicodeDecodeError."""
+        from minidb.errors import FileReadError
+
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.json', delete=False) as f:
+            filepath = f.name
+            f.write(b'\xff\xfe not json')
+
+        try:
+            with pytest.raises(FileReadError) as exc_info:
+                MiniDB.load(filepath)
+            assert 'UTF-8' in str(exc_info.value)
+        finally:
+            os.unlink(filepath)
+
     def test_persistence_write_to_readonly_path(self):
         """Test saving to an unwritable path raises error."""
         from minidb.errors import FileWriteError
