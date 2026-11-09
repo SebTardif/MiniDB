@@ -68,9 +68,13 @@ class Column:
     @classmethod
     def from_dict(cls, data: dict) -> 'Column':
         """Deserialize column from a dictionary."""
+        raw_type = data['type']
+        if not isinstance(raw_type, str):
+            raise ValueError(f'Unknown column type: {raw_type!r}')
+        column_type = ColumnType.from_string(raw_type)
         return cls(
             name=data['name'],
-            type=ColumnType[data['type']],
+            type=column_type,
             primary_key=data.get('primary_key', False),
             nullable=data.get('nullable', True),
             default=data.get('default'),
@@ -107,7 +111,7 @@ class Schema:
     def add_column(self, column: Column) -> None:
         """Add a column to the schema."""
         if column.name in self._column_map:
-            raise ValueError(f"Column '{column.name}' already exists")
+            raise ColumnError(f"Duplicate column name '{column.name}'")
         if column.primary_key and self._primary_key is not None:
             raise ColumnError(f"Multiple PRIMARY KEY columns: '{self._primary_key}', '{column.name}'")
         self.columns.append(column)

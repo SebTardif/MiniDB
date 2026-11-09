@@ -1075,8 +1075,11 @@ class Parser:
     def _parse_column_def(self) -> ColumnDef:
         """Parse a column definition."""
         name = self._expect(TokenType.IDENTIFIER).value
-        type_str = self._expect(TokenType.IDENTIFIER).value
-        col_type = ColumnType.from_string(type_str)
+        type_token = self._expect(TokenType.IDENTIFIER)
+        try:
+            col_type = ColumnType.from_string(type_token.value)
+        except ValueError as exc:
+            raise SyntaxError_(str(exc), type_token.position) from exc
 
         primary_key = False
         nullable = True

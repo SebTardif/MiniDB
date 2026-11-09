@@ -10,6 +10,13 @@ from .index import IndexManager
 from .types import Row
 
 
+def _require_row_id(value: Any, label: str) -> int:
+    """Reject a snapshot id that is not an int. bool is an int subclass."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f'{label} must be an integer')
+    return value
+
+
 @dataclass
 class Table:
     """
@@ -249,12 +256,12 @@ class Table:
         # Same checks as insert. A hand-edited file must not keep two primary
         # keys or a value the column cannot store.
         table._rows = [schema.validate_row(row, allow_missing=True) for row in data['rows']]
-        table._next_row_id = data.get('next_row_id', len(table._rows))
+        table._next_row_id = _require_row_id(data.get('next_row_id', len(table._rows)), 'next_row_id')
 
         # Files written before row_ids existed keep 0..n-1.
         saved_ids = data.get('row_ids')
         if isinstance(saved_ids, list) and len(saved_ids) == len(table._rows):
-            table._row_ids = list(saved_ids)
+            table._row_ids = [_require_row_id(row_id, 'row_ids') for row_id in saved_ids]
         else:
             table._row_ids = list(range(len(table._rows)))
 

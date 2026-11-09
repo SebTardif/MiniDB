@@ -60,13 +60,23 @@ def _deserialize(filepath: str) -> dict[str, Table]:
     except json.JSONDecodeError as e:
         raise FileReadError(filepath, f'Invalid JSON: {e}') from e
 
+    if not isinstance(data, dict):
+        raise FileReadError(filepath, 'Snapshot must be a JSON object')
+
     # Check version
     version = data.get('version', 'unknown')
     if version != CURRENT_VERSION:
         raise VersionMismatchError(version, CURRENT_VERSION)
 
+    tables_raw = data.get('tables', {})
+    if not isinstance(tables_raw, dict):
+        raise FileReadError(filepath, 'Snapshot tables must be a JSON object')
+
     tables: dict[str, Table] = {}
-    for table_name, table_data in data.get('tables', {}).items():
-        tables[table_name] = Table.from_dict(table_data)
+    for table_name, table_data in tables_raw.items():
+        try:
+            tables[table_name] = Table.from_dict(table_data)
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise FileReadError(filepath, f'Invalid table {table_name}: {exc}') from exc
 
     return tables

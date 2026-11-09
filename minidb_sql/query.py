@@ -1,7 +1,6 @@
 """Query execution engine for MiniDB."""
 
 import functools
-import re
 from collections import defaultdict
 from typing import Any
 
@@ -463,6 +462,18 @@ class QueryExecutor:
             return not result
         return result
 
+    def _order_cmp(self, column: str, left: Any, right: Any) -> int:
+        """Compare two ORDER BY values. Mismatched types raise TypeMismatchError."""
+        self._reject_mismatched_compare(column, left, right)
+        try:
+            if left < right:
+                return -1
+            if left > right:
+                return 1
+        except TypeError as exc:
+            raise TypeMismatchError(column, type(left).__name__, type(right).__name__) from exc
+        return 0
+
     def _reject_mismatched_compare(self, column: str, left: Any, right: Any) -> None:
         """Reject comparisons that Python would answer with a different type's rules.
 
@@ -475,22 +486,45 @@ class QueryExecutor:
             raise TypeMismatchError(column, type(left).__name__, type(right).__name__)
 
     def _match_like(self, value: str, pattern: str) -> bool:
-        """Match a value against a LIKE pattern."""
+        """Match LIKE with one remembered %. % is any run and _ is one character.
 
-        # Convert SQL LIKE pattern to regex
-        # % matches any sequence, _ matches single character
-        regex_pattern = '^'
-        for char in pattern:
-            if char == '%':
-                regex_pattern += '.*'
-            elif char == '_':
-                regex_pattern += '.'
-            else:
-                regex_pattern += re.escape(char)
-        regex_pattern += '$'
+        Neither wildcard crosses a newline. A literal newline still matches.
+        LIKE stays case-insensitive. Equality stays case-sensitive.
+        """
+        value_index = 0
+        pattern_index = 0
+        wildcard_pattern = -1
+        wildcard_value = -1
+        value_len = len(value)
+        pattern_len = len(pattern)
 
-        # LIKE stays case-insensitive. Equality stays case-sensitive.
-        return bool(re.match(regex_pattern, value, re.IGNORECASE))
+        while value_index < value_len:
+            if pattern_index < pattern_len and pattern[pattern_index] == '%':
+                wildcard_pattern = pattern_index
+                wildcard_value = value_index
+                pattern_index += 1
+                continue
+
+            if pattern_index < pattern_len and self._like_chars_match(pattern[pattern_index], value[value_index]):
+                value_index += 1
+                pattern_index += 1
+                continue
+
+            if wildcard_pattern == -1 or value[wildcard_value] == '\n':
+                return False
+            wildcard_value += 1
+            value_index = wildcard_value
+            pattern_index = wildcard_pattern + 1
+
+        while pattern_index < pattern_len and pattern[pattern_index] == '%':
+            pattern_index += 1
+        return pattern_index == pattern_len
+
+    def _like_chars_match(self, pattern_char: str, value_char: str) -> bool:
+        """One LIKE pattern character against one value character."""
+        if pattern_char == '_':
+            return value_char != '\n'
+        return pattern_char.casefold() == value_char.casefold()
 
     def _deduplicate_rows(self, rows: list[Row]) -> list[Row]:
         """Drop duplicate projected rows, keeping first-seen order."""
@@ -976,12 +1010,8 @@ class QueryExecutor:
                 if val_b is None:
                     return -1
 
-                # Compare values
-                if val_a < val_b:
-                    cmp = -1
-                elif val_a > val_b:
-                    cmp = 1
-                else:
+                cmp = self._order_cmp(item.column, val_a, val_b)
+                if cmp == 0:
                     continue
 
                 # Reverse for DESC

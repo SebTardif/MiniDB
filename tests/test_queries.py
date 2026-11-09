@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import time
 
 import pytest
 
@@ -17,6 +18,13 @@ class TestParserErrors:
         db = MiniDB()
         with pytest.raises(SyntaxError_):
             db.execute('SELECTX * FROM users')
+
+    def test_unknown_column_type_is_a_syntax_error(self):
+        """CREATE TABLE of an unknown type raises SyntaxError_, not ValueError."""
+        db = MiniDB()
+        with pytest.raises(SyntaxError_, match='Unknown column type: BLOB'):
+            db.execute('CREATE TABLE t (a BLOB)')
+        assert 't' not in db
 
     def test_syntax_error_unterminated_string(self):
         """Test that an unterminated string literal raises SyntaxError_."""
@@ -635,6 +643,41 @@ class TestWhereClause:
         assert 'Charlie' in names
         assert 'Diana' in names
 
+    def test_like_underscore_and_literal_dot(self):
+        """_ is one character. A dot in the pattern is a dot, not any character."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (name STRING)')
+        db.execute("INSERT INTO t (name) VALUES ('Alice')")
+        db.execute("INSERT INTO t (name) VALUES ('A.ice')")
+        assert db.query("SELECT name FROM t WHERE name LIKE 'A_ice' ORDER BY name") == [
+            {'name': 'A.ice'},
+            {'name': 'Alice'},
+        ]
+        assert db.query("SELECT name FROM t WHERE name LIKE 'A.ice'") == [{'name': 'A.ice'}]
+
+    def test_like_does_not_cross_a_newline(self):
+        """% and _ stay on one line, matching the previous matcher."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (name STRING)')
+        db.execute('INSERT INTO t (name) VALUES (?)', ['a\nb'])
+        assert db.query('SELECT name FROM t WHERE name LIKE ?', ['%']) == []
+        assert db.query('SELECT name FROM t WHERE name LIKE ?', ['_']) == []
+        assert db.query('SELECT name FROM t WHERE name = ?', ['a\nb']) == [{'name': 'a\nb'}]
+
+    def test_like_many_wildcards_returns(self):
+        """A long chain of % finishes, including a pattern that cannot match."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (name STRING)')
+        db.execute('INSERT INTO t (name) VALUES (?)', ['a' * 30])
+        failing = '%a' * 12 + '%b'
+        started = time.monotonic()
+        assert db.query('SELECT name FROM t WHERE name LIKE ?', [failing]) == []
+        assert time.monotonic() - started < 1
+        matching = '%a' * 12 + '%'
+        started = time.monotonic()
+        assert db.query('SELECT name FROM t WHERE name LIKE ?', [matching]) == [{'name': 'a' * 30}]
+        assert time.monotonic() - started < 1
+
     def test_where_in(self, db):
         """Test WHERE with IN clause."""
         results = db.query('SELECT * FROM users WHERE id IN (1, 3, 5)')
@@ -989,6 +1032,44 @@ class TestCaseExpression:
         db = self._db()
         sql = "SELECT CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END AS kind FROM users ORDER BY kind, id"
         assert [row['kind'] for row in db.query(sql)] == ['adult', 'minor', 'minor']
+
+    def test_order_by_mixed_case_results_raises(self):
+        """ORDER BY of a CASE that mixes text and integers raises TypeMismatchError."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO people (id, name, age) VALUES (1, 'Ada', 36)")
+        db.execute("INSERT INTO people (id, name, age) VALUES (2, 'Grace', 45)")
+        sql = 'SELECT CASE WHEN id = 1 THEN age ELSE name END AS label FROM people ORDER BY label'
+        with pytest.raises(TypeMismatchError, match=r"column 'label'"):
+            db.query(sql)
+
+    def test_order_by_bool_and_int_raises(self):
+        """ORDER BY does not sort a boolean with an integer the way Python does."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, active BOOLEAN)')
+        db.execute('INSERT INTO people (id, active) VALUES (1, true)')
+        db.execute('INSERT INTO people (id, active) VALUES (2, false)')
+        sql = 'SELECT CASE WHEN id = 1 THEN id ELSE active END AS label FROM people ORDER BY label'
+        with pytest.raises(TypeMismatchError, match=r"column 'label'"):
+            db.query(sql)
+
+    def test_order_by_int_and_float_sorts(self):
+        """An integer and a float in one ORDER BY column still sort numerically."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, age INTEGER)')
+        db.execute('INSERT INTO people (id, age) VALUES (1, 36)')
+        db.execute('INSERT INTO people (id, age) VALUES (2, 10)')
+        sql = 'SELECT CASE WHEN id = 1 THEN age ELSE 10.5 END AS label FROM people ORDER BY label'
+        assert [row['label'] for row in db.query(sql)] == [10.5, 36]
+
+    def test_order_by_case_null_sorts_last(self):
+        """A CASE with no ELSE is NULL and sorts after a value."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO people (id, name) VALUES (1, 'Ada')")
+        db.execute("INSERT INTO people (id, name) VALUES (2, 'Grace')")
+        sql = 'SELECT CASE WHEN id = 1 THEN name END AS label FROM people ORDER BY label'
+        assert [row['label'] for row in db.query(sql)] == ['Ada', None]
 
     def test_distinct_collapses_equal_results(self):
         db = self._db()
