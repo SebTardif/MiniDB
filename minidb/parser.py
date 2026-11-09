@@ -79,6 +79,31 @@ class OrderByItem:
 
 
 @dataclass
+class CaseResult:
+    """A THEN or ELSE value. column is set for a column reference."""
+
+    literal: Any = None
+    column: str | None = None
+    table_alias: str | None = None
+
+
+@dataclass
+class CaseWhen:
+    """One searched WHEN arm. condition uses the WHERE grammar."""
+
+    condition: WhereClause
+    result: CaseResult
+
+
+@dataclass
+class CaseExpr:
+    """Searched CASE. else_result None means no ELSE, which is NULL."""
+
+    whens: list[CaseWhen]
+    else_result: CaseResult | None = None
+
+
+@dataclass
 class AggregateFunction:
     """Represents an aggregate function call."""
 
@@ -95,6 +120,7 @@ class SelectColumn:
     table_alias: str | None = None
     aggregate: AggregateFunction | None = None
     alias: str | None = None
+    case: CaseExpr | None = None
 
 
 @dataclass
@@ -217,6 +243,11 @@ class Lexer:
         'AS': TokenType.AS,
         'DISTINCT': TokenType.DISTINCT,
         'HAVING': TokenType.HAVING,
+        'CASE': TokenType.CASE,
+        'WHEN': TokenType.WHEN,
+        'THEN': TokenType.THEN,
+        'ELSE': TokenType.ELSE,
+        'END': TokenType.END,
         'BEGIN': TokenType.BEGIN,
         'COMMIT': TokenType.COMMIT,
         'ROLLBACK': TokenType.ROLLBACK,
@@ -572,6 +603,9 @@ class Parser:
 
     def _parse_select_column(self) -> SelectColumn:
         """Parse a single SELECT column."""
+        if self._match(TokenType.CASE):
+            return self._parse_case_column()
+
         # Check for aggregate functions
         if self._match(TokenType.IDENTIFIER):
             name = self._current().value.upper()
@@ -636,6 +670,57 @@ class Parser:
             aggregate=AggregateFunction(function=func_name, column=col_name, alias=alias),
             alias=alias,
         )
+
+    def _parse_case_column(self) -> SelectColumn:
+        """Parse CASE WHEN ... THEN ... [ELSE ...] END [AS alias]."""
+        self._expect(TokenType.CASE)
+        if not self._match(TokenType.WHEN):
+            token = self._current()
+            raise SyntaxError_(f'Expected WHEN, got {token.type.name}', token.position)
+
+        whens: list[CaseWhen] = []
+        while self._match(TokenType.WHEN):
+            self._advance()
+            condition = self._parse_or()
+            self._expect(TokenType.THEN)
+            whens.append(CaseWhen(condition=condition, result=self._parse_case_result()))
+
+        else_result = None
+        if self._match(TokenType.ELSE):
+            self._advance()
+            else_result = self._parse_case_result()
+        self._expect(TokenType.END)
+
+        alias = None
+        if self._match(TokenType.AS):
+            self._advance()
+            alias = self._expect(TokenType.IDENTIFIER).value
+        elif self._match(TokenType.IDENTIFIER):
+            alias = self._advance().value
+
+        return SelectColumn(name='CASE', alias=alias, case=CaseExpr(whens=whens, else_result=else_result))
+
+    def _parse_case_result(self) -> CaseResult:
+        """Parse a THEN or ELSE result: literal, parameter, or column."""
+        token = self._current()
+        if token.type in (
+            TokenType.STRING_LITERAL,
+            TokenType.INTEGER_LITERAL,
+            TokenType.FLOAT_LITERAL,
+            TokenType.BOOLEAN_LITERAL,
+            TokenType.NULL,
+            TokenType.PLACEHOLDER,
+        ):
+            return CaseResult(literal=self._parse_value())
+        if token.type == TokenType.IDENTIFIER:
+            name = self._advance().value
+            table_alias = None
+            if self._match(TokenType.DOT):
+                self._advance()
+                table_alias = name
+                name = self._expect(TokenType.IDENTIFIER).value
+            return CaseResult(column=name, table_alias=table_alias)
+        raise SyntaxError_(f'Expected literal value, got {token.type.name}', token.position)
 
     def _parse_join(self) -> JoinClause:
         """Parse a JOIN clause."""
@@ -1108,8 +1193,32 @@ def _count_query_placeholders(
     if isinstance(query, DeleteQuery):
         return _count_where_placeholders(query.where)
     if isinstance(query, SelectQuery):
-        return _count_where_placeholders(query.where) + _count_where_placeholders(query.having)
+        total = _count_where_placeholders(query.where) + _count_where_placeholders(query.having)
+        for col in query.columns:
+            if col.case is not None:
+                total += _count_case_placeholders(col.case)
+        return total
     return 0
+
+
+def _count_case_placeholders(expr: CaseExpr) -> int:
+    total = 0
+    for when in expr.whens:
+        total += _count_where_placeholders(when.condition)
+        if when.result.column is None:
+            total += _count_placeholders_in_value(when.result.literal)
+    if expr.else_result is not None and expr.else_result.column is None:
+        total += _count_placeholders_in_value(expr.else_result.literal)
+    return total
+
+
+def _bind_case(expr: CaseExpr, params: list[Any], index: list[int]) -> None:
+    for when in expr.whens:
+        _bind_where(when.condition, params, index)
+        if when.result.column is None:
+            when.result.literal = _bind_value(when.result.literal, params, index)
+    if expr.else_result is not None and expr.else_result.column is None:
+        expr.else_result.literal = _bind_value(expr.else_result.literal, params, index)
 
 
 def _bind_value(value: Any, params: list[Any], index: list[int]) -> Any:
@@ -1162,5 +1271,8 @@ def bind_params(
     elif isinstance(query, DeleteQuery):
         _bind_where(query.where, values, index)
     elif isinstance(query, SelectQuery):
+        for col in query.columns:
+            if col.case is not None:
+                _bind_case(col.case, values, index)
         _bind_where(query.where, values, index)
         _bind_where(query.having, values, index)
