@@ -882,6 +882,8 @@ class Parser:
             col = self._expect(TokenType.IDENTIFIER).value
             self._expect(TokenType.EQUALS)
             val = self._parse_value()
+            if col in set_clause:
+                raise InvalidQueryError(f"Duplicate column name '{col}'")
             set_clause[col] = val
 
             if not self._match(TokenType.COMMA):
