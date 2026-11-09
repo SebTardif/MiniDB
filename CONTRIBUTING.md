@@ -15,7 +15,7 @@ cd MiniDB
 pip install ruff==0.16.6 mypy pytest pytest-cov
 
 # Verify everything works
-python -m pytest tests/ -v
+python -m pytest tests/ --cov=minidb --cov-report=term-missing
 python main.py
 ```
 
@@ -34,7 +34,7 @@ ruff format --check .
 mypy minidb/
 
 # Tests
-python -m pytest tests/ -v
+python -m pytest tests/ --cov=minidb --cov-report=term-missing
 ```
 
 ## Commit Message Convention
