@@ -623,6 +623,24 @@ class TestWhereClause:
         results = db.query('SELECT name FROM people WHERE NOT age IS NULL')
         assert [r['name'] for r in results] == ['Alice']
 
+    def test_comparison_with_null_matches_nothing(self):
+        """A comparison with NULL is unknown, so WHERE keeps no row."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO people (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO people (id, name) VALUES (2, 'Bob')")
+
+        assert db.query('SELECT name FROM people WHERE age = NULL') == []
+        assert db.query('SELECT name FROM people WHERE age != NULL') == []
+        assert db.query('SELECT name FROM people WHERE NOT age = NULL') == []
+        assert db.query('SELECT name FROM people WHERE age > NULL') == []
+        assert db.query('SELECT name FROM people WHERE name LIKE NULL') == []
+        assert db.query('SELECT name FROM people WHERE NOT age IS NULL') == [{'name': 'Alice'}]
+
+        plan = db.explain('SELECT name FROM people WHERE id > NULL')
+        assert 'index_range_scan' not in plan
+        assert 'index_scan' not in plan
+
     def test_order_by_asc(self, db):
         """Test ORDER BY ascending."""
         results = db.query('SELECT * FROM users ORDER BY age ASC')

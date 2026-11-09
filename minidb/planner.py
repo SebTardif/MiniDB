@@ -117,6 +117,8 @@ class QueryPlanner:
             value = condition.value
 
             # Check if column has an index
+            if value is None:
+                return None
             if self.table.has_index(column) and operator in ('=', '<', '<=', '>', '>='):
                 return (column, operator, value)
 
