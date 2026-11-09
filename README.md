@@ -16,6 +16,7 @@ A miniature in-memory database with SQL-like query support, built from scratch u
   - GROUP BY with aggregations
   - HAVING after GROUP BY
   - LIMIT clause
+  - Searched `CASE` in the select list (`CASE WHEN ... THEN ... ELSE ... END`)
 - **Aggregations**: COUNT, SUM, AVG, MIN, MAX
 - **JOINs**: INNER JOIN and LEFT JOIN between tables
 - **Indexing**: Automatic hash-based indexing on primary keys
@@ -165,6 +166,15 @@ SELECT col1, COUNT(*), AVG(col2) FROM table_name GROUP BY col1
 SELECT col1, COUNT(*) FROM table_name GROUP BY col1 HAVING COUNT(*) > 1
 SELECT col1, COUNT(*) AS n FROM table_name GROUP BY col1 HAVING n > 1
 ```
+
+### CASE
+
+```sql
+SELECT CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END FROM users
+SELECT CASE WHEN age >= 18 THEN 'adult' WHEN age IS NULL THEN 'unknown' ELSE 'minor' END AS kind
+```
+
+`CASE` is searched form in the select list. The first true `WHEN` wins. A comparison that is unknown, including `= NULL`, is not true, so a later `WHEN` or `ELSE` runs. No `ELSE` returns NULL. `WHEN` uses the same comparison rules as `WHERE`. The result column is `CASE` unless you give it an alias. `CASE` next to `GROUP BY` may only read grouped columns.
 
 ### HAVING
 

@@ -7,6 +7,8 @@ from typing import Any
 
 from .errors import ColumnNotFoundError, InvalidQueryError, TableNotFoundError, TypeMismatchError
 from .parser import (
+    CaseExpr,
+    CaseResult,
     Condition,
     CreateTableQuery,
     DeleteQuery,
@@ -350,6 +352,10 @@ class QueryExecutor:
     def _reject_unknown_query_columns(self, query: SelectQuery, known_tables: set[str]) -> None:
         """Reject unknown SELECT, WHERE, and qualified ORDER BY names before scanning."""
         for col in query.columns:
+            if col.case is not None:
+                for table_alias, column in self._case_columns(col.case):
+                    self._require_column(column, table_alias, known_tables, query.table)
+                continue
             if col.aggregate or col.name == '*':
                 continue
             self._require_column(col.name, col.table_alias, known_tables, query.table)
@@ -497,6 +503,46 @@ class QueryExecutor:
                 unique.append(row)
         return unique
 
+    def _case_columns(self, expr: CaseExpr) -> list[tuple[str | None, str]]:
+        """Column references inside WHEN, THEN, and ELSE."""
+        refs: list[tuple[str | None, str]] = []
+
+        def add_where(where: WhereClause) -> None:
+            for cond in where.conditions:
+                if isinstance(cond, Condition):
+                    refs.append((cond.table_alias, cond.column))
+                elif isinstance(cond, WhereClause):
+                    add_where(cond)
+
+        for when in expr.whens:
+            add_where(when.condition)
+            if when.result.column is not None:
+                refs.append((when.result.table_alias, when.result.column))
+        if expr.else_result is not None and expr.else_result.column is not None:
+            refs.append((expr.else_result.table_alias, expr.else_result.column))
+        return refs
+
+    def _reject_case_grouping(self, expr: CaseExpr, group_by: list[str]) -> None:
+        """A CASE column must be grouped, same as a bare select column."""
+        for table_alias, column in self._case_columns(expr):
+            grouped = self._select_is_grouped(SelectColumn(name=column, table_alias=table_alias), group_by)
+            if not grouped:
+                raise InvalidQueryError(f"Column '{column}' must appear in GROUP BY or be aggregated")
+
+    def _evaluate_case(self, row: Row, expr: CaseExpr, known: set[str] | None) -> Any:
+        """First true WHEN wins. Unknown is not true. No ELSE is NULL."""
+        for when in expr.whens:
+            if self._evaluate_where(row, when.condition, known):
+                return self._case_result_value(row, when.result, known)
+        if expr.else_result is None:
+            return None
+        return self._case_result_value(row, expr.else_result, known)
+
+    def _case_result_value(self, row: Row, result: CaseResult, known: set[str] | None) -> Any:
+        if result.column is None:
+            return result.literal
+        return self._read_qualified_column(row, result.column, result.table_alias, known)
+
     def _has_aggregates(self, columns: list[SelectColumn]) -> bool:
         """Check if any column has an aggregate function."""
         return any(col.aggregate for col in columns)
@@ -618,6 +664,13 @@ class QueryExecutor:
                     if sel_col.alias and agg_name in result_row:
                         raise InvalidQueryError(f"Duplicate column name '{sel_col.alias}'")
                     result_row[agg_name] = agg_value
+                elif sel_col.case is not None:
+                    self._reject_case_grouping(sel_col.case, query.group_by)
+                    value = self._evaluate_case(sample, sel_col.case, known)
+                    out_name = sel_col.alias or 'CASE'
+                    if out_name in result_row:
+                        raise InvalidQueryError(f"Duplicate column name '{out_name}'")
+                    result_row[out_name] = value
                 elif sel_col.name == '*':
                     hidden = [
                         key for key in sample if '.' not in key and not self._bare_name_is_grouped(key, query.group_by)
@@ -683,7 +736,9 @@ class QueryExecutor:
             if not shown:
                 keys.add(name)
         for col in query.columns:
-            if col.aggregate:
+            if col.case is not None:
+                keys.add(col.alias or 'CASE')
+            elif col.aggregate:
                 keys.add(self._aggregate_label(col))
             elif col.name != '*':
                 keys.add(col.alias or col.name)
@@ -691,7 +746,10 @@ class QueryExecutor:
 
     def _execute_aggregation(self, rows: list[tuple[int, Row]], query: SelectQuery) -> list[Row]:
         """Execute aggregation without GROUP BY."""
-        bare = [col.name for col in query.columns if not col.aggregate and col.name != '*']
+        for col in query.columns:
+            if col.case is not None:
+                self._reject_case_grouping(col.case, [])
+        bare = [col.name for col in query.columns if not col.aggregate and col.case is None and col.name != '*']
         if bare:
             raise InvalidQueryError(f"Column '{bare[0]}' must appear in GROUP BY or be aggregated")
         if any(col.name == '*' and not col.aggregate for col in query.columns):
@@ -806,6 +864,12 @@ class QueryExecutor:
                 elif col.aggregate:
                     # Aggregates handled separately
                     pass
+                elif col.case is not None:
+                    value = self._evaluate_case(row, col.case, known_tables)
+                    out_name = col.alias or 'CASE'
+                    if out_name in result:
+                        raise InvalidQueryError(f"Duplicate column name '{out_name}'")
+                    _assign_output(result, written, out_name, value, None)
                 else:
                     col_name = col.name
                     out_name = col.alias or col_name
@@ -831,6 +895,9 @@ class QueryExecutor:
             return
         visible: set[str] = set()
         for col in query.columns:
+            if col.case is not None:
+                visible.add(col.alias or 'CASE')
+                continue
             if col.aggregate is not None:
                 function = col.aggregate.function
                 argument = col.aggregate.column
@@ -854,6 +921,9 @@ class QueryExecutor:
             _row_id, row = indexed
             view = dict(row)
             for col in query.columns:
+                if col.case is not None:
+                    view[col.alias or 'CASE'] = self._evaluate_case(row, col.case, known_tables)
+                    continue
                 if col.alias is None or col.aggregate is not None or col.name == '*':
                     continue
                 if col.table_alias:

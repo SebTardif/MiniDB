@@ -889,3 +889,122 @@ class TestDistinct:
         results = db.query('SELECT DISTINCT name FROM users LIMIT 1')
         assert len(results) == 1
         assert results[0]['name'] == 'Alice'
+
+
+class TestCaseExpression:
+    """Searched CASE in the select list. WHEN uses WHERE comparison rules."""
+
+    def _db(self) -> MiniDB:
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING, age INTEGER, active BOOLEAN)')
+        db.execute("INSERT INTO users (id, name, age, active) VALUES (1, 'Ada', 17, true)")
+        db.execute("INSERT INTO users (id, name, age, active) VALUES (2, 'Grace', 18, false)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (3, 'Lin', NULL)")
+        return db
+
+    def test_issue_example_returns_one_value_per_row(self):
+        """SELECT CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END."""
+        db = self._db()
+        rows = db.query("SELECT CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END FROM users ORDER BY id")
+        # NULL >= 18 is unknown, so the ELSE arm runs.
+        assert rows == [{'CASE': 'minor'}, {'CASE': 'adult'}, {'CASE': 'minor'}]
+
+    def test_first_matching_when_wins_and_alias(self):
+        db = self._db()
+        sql = (
+            "SELECT CASE WHEN age >= 18 THEN 'adult' WHEN age >= 13 THEN 'teen' "
+            "ELSE 'child' END AS kind FROM users ORDER BY id"
+        )
+        assert db.query(sql) == [{'kind': 'teen'}, {'kind': 'adult'}, {'kind': 'child'}]
+
+    def test_missing_else_is_null(self):
+        db = self._db()
+        rows = db.query("SELECT CASE WHEN age >= 18 THEN 'adult' END AS kind FROM users ORDER BY id")
+        assert rows == [{'kind': None}, {'kind': 'adult'}, {'kind': None}]
+
+    def test_is_null_and_else_column(self):
+        db = self._db()
+        sql = "SELECT CASE WHEN age IS NULL THEN 'missing' ELSE name END AS label FROM users ORDER BY id"
+        assert db.query(sql) == [{'label': 'Ada'}, {'label': 'Grace'}, {'label': 'missing'}]
+
+    def test_null_comparison_does_not_match(self):
+        db = self._db()
+        rows = db.query("SELECT CASE WHEN age = NULL THEN 'yes' ELSE 'no' END AS label FROM users")
+        assert rows == [{'label': 'no'}, {'label': 'no'}, {'label': 'no'}]
+
+    def test_boolean_comparison_matches_where(self):
+        db = self._db()
+        with pytest.raises(TypeMismatchError):
+            db.query("SELECT CASE WHEN active = 1 THEN 'yes' ELSE 'no' END FROM users")
+        with pytest.raises(TypeMismatchError):
+            db.query("SELECT CASE WHEN id = true THEN 'yes' ELSE 'no' END FROM users")
+
+    def test_string_compared_with_int_does_not_match(self):
+        """name = 5 is false in WHERE, not a type error. CASE must agree."""
+        db = self._db()
+        rows = db.query("SELECT CASE WHEN name = 5 THEN 'num' ELSE name END AS label FROM users ORDER BY id")
+        assert [row['label'] for row in rows] == ['Ada', 'Grace', 'Lin']
+
+    def test_and_inside_when(self):
+        db = self._db()
+        db.execute("INSERT INTO users (id, name, age, active) VALUES (4, 'Mae', 40, true)")
+        sql = "SELECT CASE WHEN age >= 18 AND active = true THEN 'yes' ELSE 'no' END AS label FROM users ORDER BY id"
+        assert db.query(sql) == [
+            {'label': 'no'},
+            {'label': 'no'},
+            {'label': 'no'},
+            {'label': 'yes'},
+        ]
+
+    def test_grouped_case_uses_the_group_key(self):
+        db = self._db()
+        sql = (
+            "SELECT age, CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END AS kind FROM users GROUP BY age ORDER BY age"
+        )
+        assert db.query(sql) == [
+            {'age': 17, 'kind': 'minor'},
+            {'age': 18, 'kind': 'adult'},
+            {'age': None, 'kind': 'minor'},
+        ]
+
+    def test_ungrouped_case_column_is_rejected(self):
+        db = self._db()
+        with pytest.raises(InvalidQueryError, match='name'):
+            db.query("SELECT CASE WHEN name = 'Ada' THEN 'a' ELSE 'b' END AS kind FROM users GROUP BY age")
+
+    def test_case_with_aggregate_requires_group_by(self):
+        db = self._db()
+        with pytest.raises(InvalidQueryError, match='age'):
+            db.query("SELECT CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END, COUNT(*) FROM users")
+
+    def test_having_can_see_the_case_alias(self):
+        db = self._db()
+        sql = (
+            "SELECT age, CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END AS kind "
+            "FROM users GROUP BY age HAVING kind = 'adult'"
+        )
+        assert db.query(sql) == [{'age': 18, 'kind': 'adult'}]
+
+    def test_order_by_alias(self):
+        db = self._db()
+        sql = "SELECT CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END AS kind FROM users ORDER BY kind, id"
+        assert [row['kind'] for row in db.query(sql)] == ['adult', 'minor', 'minor']
+
+    def test_distinct_collapses_equal_results(self):
+        db = self._db()
+        rows = db.query("SELECT DISTINCT CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END AS kind FROM users")
+        assert rows == [{'kind': 'minor'}, {'kind': 'adult'}]
+
+    def test_placeholder_binds_left_to_right(self):
+        db = self._db()
+        sql = "SELECT CASE WHEN age >= ? THEN ? ELSE 'minor' END AS kind FROM users WHERE id = ? "
+        assert db.query(sql, [18, 'adult', 2]) == [{'kind': 'adult'}]
+
+    def test_unknown_column_and_syntax(self):
+        db = self._db()
+        with pytest.raises(ColumnNotFoundError):
+            db.query("SELECT CASE WHEN missing = 1 THEN 'a' ELSE 'b' END FROM users")
+        with pytest.raises(SyntaxError_, match='END'):
+            db.query("SELECT CASE WHEN age >= 18 THEN 'adult' FROM users")
+        with pytest.raises(SyntaxError_, match='WHEN'):
+            db.query("SELECT CASE age WHEN 18 THEN 'adult' END FROM users")
