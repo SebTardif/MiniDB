@@ -1,9 +1,12 @@
 """Tests for WHERE, ORDER BY, GROUP BY queries."""
 
+import os
+import tempfile
+
 import pytest
 
 from minidb import Column, ColumnType, MiniDB
-from minidb.errors import ColumnNotFoundError, InvalidQueryError, SyntaxError_, TypeMismatchError
+from minidb.errors import ColumnError, ColumnNotFoundError, InvalidQueryError, SyntaxError_, TypeMismatchError
 
 
 class TestParserErrors:
@@ -144,6 +147,63 @@ class TestTypeValidation:
             db.execute('INSERT INTO t (id, age) VALUES (1, 1.9)')
         db.execute('INSERT INTO t (id, age) VALUES (2, 2.0)')
         assert db.query('SELECT age FROM t WHERE id = 2') == [{'age': 2}]
+
+    def test_column_default_is_cast_like_insert(self):
+        """An omitted column stores the default after the column type's cast.
+
+        INTEGER default '5' used to stay a string, so WHERE n = 5 missed
+        the row and loading the saved file raised TypeMismatchError.
+        """
+        with pytest.raises(TypeMismatchError, match="column 'n'"):
+            Column('n', ColumnType.INTEGER, default='nope')
+
+        db = MiniDB()
+        db.create_table(
+            'd',
+            [
+                Column('id', ColumnType.INTEGER, primary_key=True),
+                Column('n', ColumnType.INTEGER, default='5'),
+                Column('width', ColumnType.INTEGER, default=1.0),
+                Column('active', ColumnType.BOOLEAN, default=False),
+            ],
+        )
+        db.execute('INSERT INTO d (id) VALUES (1)')
+        assert db.query('SELECT n, width, active FROM d') == [{'n': 5, 'width': 1, 'active': False}]
+        assert isinstance(db.query('SELECT n FROM d')[0]['n'], int)
+        assert isinstance(db.query('SELECT width FROM d')[0]['width'], int)
+        assert db.query('SELECT id FROM d WHERE n = 5') == [{'id': 1}]
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as handle:
+            filepath = handle.name
+        try:
+            db.save(filepath)
+            loaded = MiniDB.load(filepath)
+        finally:
+            os.remove(filepath)
+        assert loaded.query('SELECT n, width, active FROM d') == [{'n': 5, 'width': 1, 'active': False}]
+
+    def test_create_table_rejects_duplicate_column_names(self):
+        """Two columns with one name used to keep the later type.
+
+        CREATE TABLE (name STRING, name INTEGER) stored INSERT '5' as the
+        integer 5. A repeated PRIMARY KEY name stored the integer 1 as text.
+        """
+        db = MiniDB()
+        with pytest.raises(ColumnError, match="Duplicate column name 'name'"):
+            db.execute('CREATE TABLE u (id INTEGER PRIMARY KEY, name STRING, name INTEGER)')
+        with pytest.raises(ColumnError, match="Duplicate column name 'id'"):
+            db.execute('CREATE TABLE u (id INTEGER PRIMARY KEY, id STRING)')
+        with pytest.raises(ColumnError, match="Duplicate column name 'name'"):
+            db.create_table(
+                'u',
+                [
+                    Column('id', ColumnType.INTEGER, primary_key=True),
+                    Column('name', ColumnType.STRING),
+                    Column('name', ColumnType.INTEGER),
+                ],
+            )
+        db.execute('CREATE TABLE u (id INTEGER PRIMARY KEY, name STRING)')
+        assert 'u' in db
 
     def test_boolean_rejects_non_booleans(self):
         """A BOOLEAN column does not treat 'bob' as false or 2 as true."""

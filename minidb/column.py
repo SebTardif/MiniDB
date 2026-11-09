@@ -24,6 +24,9 @@ class Column:
             pass
         if self.primary_key:
             self.nullable = False
+        if self.default is not None:
+            # Same cast as INSERT. A raw default skips INTEGER's int() rules.
+            self.default = self.validate(self.default)
 
     def validate(self, value: Any) -> Any:
         """
@@ -88,6 +91,12 @@ class Schema:
 
     def _rebuild_indexes(self):
         """Rebuild internal indexes for fast lookups."""
+        seen: set[str] = set()
+        for col in self.columns:
+            if col.name in seen:
+                # The map would keep the last column and drop the earlier type.
+                raise ColumnError(f"Duplicate column name '{col.name}'")
+            seen.add(col.name)
         self._column_map = {col.name: col for col in self.columns}
         primary_keys = [col.name for col in self.columns if col.primary_key]
         if len(primary_keys) > 1:
@@ -141,7 +150,7 @@ class Schema:
                 validated[col.name] = col.validate(row[col.name])
             elif allow_missing:
                 if col.default is not None:
-                    validated[col.name] = col.default
+                    validated[col.name] = col.validate(col.default)
                 elif col.nullable:
                     validated[col.name] = None
                 else:
