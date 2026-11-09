@@ -314,7 +314,7 @@ class QueryExecutor:
             return None
 
         for cond in where.and_conjuncts():
-            if cond.column == column and not cond.negated and cond.operator in operators:
+            if cond.column == column and not cond.negated and cond.value is not None and cond.operator in operators:
                 return cond
 
         return None
@@ -413,7 +413,9 @@ class QueryExecutor:
             result = value is None
         elif op == 'IS NOT NULL':
             result = value is not None
-        elif value is None:
+        elif value is None or (cond_value is None and op in ('=', '!=', '>', '>=', '<', '<=', 'LIKE', 'IN')):
+            # NULL compared with =, !=, <, or LIKE is unknown. NOT unknown
+            # is still unknown, so the row is dropped either way.
             return False
         elif op in ('=', '!=', '>', '>=', '<', '<='):
             self._reject_mismatched_compare(condition.column, value, cond_value)

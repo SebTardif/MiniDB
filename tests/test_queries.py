@@ -34,6 +34,28 @@ class TestParserErrors:
         with pytest.raises(SyntaxError_):
             db.execute('')
 
+    def test_sql_comments_are_skipped(self):
+        """Line and block comments match the README examples."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, name STRING, n INTEGER)')
+        db.execute("INSERT INTO t (id, name, n) VALUES (1, 'a', -3)")
+        assert db.query("SELECT name FROM t WHERE name = 'a' -- tail") == [{'name': 'a'}]
+        assert db.query('SELECT name FROM t /* mid */ WHERE id = 1') == [{'name': 'a'}]
+        assert db.query('SELECT n FROM t WHERE n = -3') == [{'n': -3}]
+        with pytest.raises(SyntaxError_, match='Unterminated block comment'):
+            db.query('SELECT name FROM t /* oops WHERE id = 1')
+
+    def test_where_parentheses_have_a_depth_limit(self):
+        """Hundreds of nested WHERE parentheses raise SyntaxError_, not RecursionError."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (n INTEGER)')
+        db.execute('INSERT INTO t (n) VALUES (1)')
+        modest = 'SELECT n FROM t WHERE ' + ('(' * 8) + 'n = 1' + (')' * 8)
+        assert db.query(modest) == [{'n': 1}]
+        deep = 'SELECT n FROM t WHERE ' + ('(' * 101) + 'n = 1' + (')' * 101)
+        with pytest.raises(SyntaxError_, match='Parentheses nested more than 100 levels'):
+            db.query(deep)
+
     def test_having_after_select_is_rejected(self):
         """HAVING without GROUP BY or SELECT aggregates raises InvalidQueryError."""
         db = MiniDB()
@@ -622,6 +644,24 @@ class TestWhereClause:
         db.execute("INSERT INTO people (id, name) VALUES (2, 'Bob')")
         results = db.query('SELECT name FROM people WHERE NOT age IS NULL')
         assert [r['name'] for r in results] == ['Alice']
+
+    def test_comparison_with_null_matches_nothing(self):
+        """A comparison with NULL is unknown, so WHERE keeps no row."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, name STRING, age INTEGER)')
+        db.execute("INSERT INTO people (id, name, age) VALUES (1, 'Alice', 30)")
+        db.execute("INSERT INTO people (id, name) VALUES (2, 'Bob')")
+
+        assert db.query('SELECT name FROM people WHERE age = NULL') == []
+        assert db.query('SELECT name FROM people WHERE age != NULL') == []
+        assert db.query('SELECT name FROM people WHERE NOT age = NULL') == []
+        assert db.query('SELECT name FROM people WHERE age > NULL') == []
+        assert db.query('SELECT name FROM people WHERE name LIKE NULL') == []
+        assert db.query('SELECT name FROM people WHERE NOT age IS NULL') == [{'name': 'Alice'}]
+
+        plan = db.explain('SELECT name FROM people WHERE id > NULL')
+        assert 'index_range_scan' not in plan
+        assert 'index_scan' not in plan
 
     def test_order_by_asc(self, db):
         """Test ORDER BY ascending."""

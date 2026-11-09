@@ -290,11 +290,32 @@ class Lexer:
             elif char == '?':
                 self.tokens.append(Token(TokenType.PLACEHOLDER, '?', self.pos))
                 self.pos += 1
+            elif char == '-' and self.pos + 1 < len(self.sql) and self.sql[self.pos + 1] == '-':
+                self._skip_line_comment()
+            elif char == '/' and self.pos + 1 < len(self.sql) and self.sql[self.pos + 1] == '*':
+                self._skip_block_comment()
             else:
                 raise SyntaxError_(f"Unexpected character: '{char}'", self.pos)
 
         self.tokens.append(Token(TokenType.EOF, None, self.pos))
         return self.tokens
+
+    def _skip_line_comment(self) -> None:
+        """Skip a -- comment through the end of the line."""
+        self.pos += 2
+        while self.pos < len(self.sql) and self.sql[self.pos] not in '\n\r':
+            self.pos += 1
+
+    def _skip_block_comment(self) -> None:
+        """Skip a /* */ comment. An unclosed comment is a syntax error."""
+        start = self.pos
+        self.pos += 2
+        while self.pos + 1 < len(self.sql):
+            if self.sql[self.pos] == '*' and self.sql[self.pos + 1] == '/':
+                self.pos += 2
+                return
+            self.pos += 1
+        raise SyntaxError_('Unterminated block comment', start)
 
     def _skip_whitespace(self):
         """Skip whitespace characters."""
@@ -393,6 +414,7 @@ class Parser:
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens
         self.pos = 0
+        self._paren_depth = 0
 
     def parse(
         self,
@@ -688,8 +710,17 @@ class Parser:
     def _parse_predicate(self) -> Condition | WhereClause:
         """Parse a parenthesized clause or a single condition."""
         if self._match(TokenType.LPAREN):
+            # Each pair recurses through OR and AND. Past this depth the
+            # call stack raises RecursionError instead of a SQL error.
+            if self._paren_depth >= 100:
+                token = self.tokens[self.pos]
+                raise SyntaxError_('Parentheses nested more than 100 levels', token.position)
             self._advance()
-            clause = self._parse_or()
+            self._paren_depth += 1
+            try:
+                clause = self._parse_or()
+            finally:
+                self._paren_depth -= 1
             self._expect(TokenType.RPAREN)
             return clause
         return self._parse_condition()
