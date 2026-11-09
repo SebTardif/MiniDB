@@ -1,5 +1,6 @@
 """CHANGELOG.md must list released versions and accept the next one."""
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -21,10 +22,9 @@ def test_changelog_lists_versions_through_the_current_tag() -> None:
     assert 'DISTINCT, IS NULL, explain, and SQL correctness (#10)' in text
 
 
-def test_changelog_insertion_flag_matches_semantic_release() -> None:
-    """Update mode writes a section only when this flag is in the file."""
+def test_release_please_manifest_matches_the_package_version() -> None:
+    """The manifest is the last released version, which is still on main."""
     config = tomllib.loads(PYPROJECT.read_text(encoding='utf-8'))
-    changelog = config['tool']['semantic_release']['changelog']
-    assert changelog['mode'] == 'update'
-    assert changelog['insertion_flag'] == INSERTION_FLAG
-    assert INSERTION_FLAG in CHANGELOG.read_text(encoding='utf-8')
+    manifest = json.loads((ROOT / '.release-please-manifest.json').read_text(encoding='utf-8'))
+    assert manifest['.'] == config['project']['version']
+    assert 'semantic_release' not in config.get('tool', {})
