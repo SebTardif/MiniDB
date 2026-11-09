@@ -91,6 +91,12 @@ class Schema:
 
     def _rebuild_indexes(self):
         """Rebuild internal indexes for fast lookups."""
+        seen: set[str] = set()
+        for col in self.columns:
+            if col.name in seen:
+                # The map would keep the last column and drop the earlier type.
+                raise ColumnError(f"Duplicate column name '{col.name}'")
+            seen.add(col.name)
         self._column_map = {col.name: col for col in self.columns}
         primary_keys = [col.name for col in self.columns if col.primary_key]
         if len(primary_keys) > 1:

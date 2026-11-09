@@ -6,7 +6,7 @@ import tempfile
 import pytest
 
 from minidb import Column, ColumnType, MiniDB
-from minidb.errors import ColumnNotFoundError, InvalidQueryError, SyntaxError_, TypeMismatchError
+from minidb.errors import ColumnError, ColumnNotFoundError, InvalidQueryError, SyntaxError_, TypeMismatchError
 
 
 class TestParserErrors:
@@ -181,6 +181,29 @@ class TestTypeValidation:
         finally:
             os.remove(filepath)
         assert loaded.query('SELECT n, width, active FROM d') == [{'n': 5, 'width': 1, 'active': False}]
+
+    def test_create_table_rejects_duplicate_column_names(self):
+        """Two columns with one name used to keep the later type.
+
+        CREATE TABLE (name STRING, name INTEGER) stored INSERT '5' as the
+        integer 5. A repeated PRIMARY KEY name stored the integer 1 as text.
+        """
+        db = MiniDB()
+        with pytest.raises(ColumnError, match="Duplicate column name 'name'"):
+            db.execute('CREATE TABLE u (id INTEGER PRIMARY KEY, name STRING, name INTEGER)')
+        with pytest.raises(ColumnError, match="Duplicate column name 'id'"):
+            db.execute('CREATE TABLE u (id INTEGER PRIMARY KEY, id STRING)')
+        with pytest.raises(ColumnError, match="Duplicate column name 'name'"):
+            db.create_table(
+                'u',
+                [
+                    Column('id', ColumnType.INTEGER, primary_key=True),
+                    Column('name', ColumnType.STRING),
+                    Column('name', ColumnType.INTEGER),
+                ],
+            )
+        db.execute('CREATE TABLE u (id INTEGER PRIMARY KEY, name STRING)')
+        assert 'u' in db
 
     def test_boolean_rejects_non_booleans(self):
         """A BOOLEAN column does not treat 'bob' as false or 2 as true."""
