@@ -7,6 +7,13 @@ This changelog is updated by
 
 <!-- version list -->
 
+## [1.3.1](https://github.com/SebTardif/MiniDB/compare/v1.3.0...v1.3.1) (2026-11-09)
+
+
+### Documentation
+
+* link the README badge to minidb-sql on PyPI ([#44](https://github.com/SebTardif/MiniDB/issues/44)) ([6dd5b83](https://github.com/SebTardif/MiniDB/commit/6dd5b831b2a9558c15f95bce4d21717488112103))
+
 ## [1.3.0](https://github.com/SebTardif/MiniDB/compare/v1.2.0...v1.3.0) (2026-11-09)
 
 
