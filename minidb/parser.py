@@ -40,6 +40,22 @@ class WhereClause:
     conditions: list  # List of Condition or WhereClause (nested)
     operator: str = 'AND'  # 'AND' or 'OR'
 
+    def and_conjuncts(self) -> list[Condition]:
+        """AND predicates, including a comparison wrapped in parentheses.
+
+        A parenthesized comparison is its own WhereClause. Nested OR is a
+        different predicate and must not become an index probe.
+        """
+        if self.operator != 'AND':
+            return []
+        found: list[Condition] = []
+        for cond in self.conditions:
+            if isinstance(cond, Condition):
+                found.append(cond)
+            elif isinstance(cond, WhereClause) and cond.operator == 'AND':
+                found.extend(cond.and_conjuncts())
+        return found
+
 
 @dataclass
 class JoinClause:
@@ -963,6 +979,8 @@ class Parser:
             nullable = False
         elif self._match(TokenType.NULL):
             self._advance()
+            if primary_key:
+                raise InvalidQueryError(f"PRIMARY KEY column '{name}' cannot be NULL")
             nullable = True
 
         return ColumnDef(name=name, type=col_type, primary_key=primary_key, nullable=nullable)

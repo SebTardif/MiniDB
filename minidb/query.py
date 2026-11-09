@@ -307,19 +307,14 @@ class QueryExecutor:
     def _find_index_condition(self, where: WhereClause, column: str, operators: tuple[str, ...]) -> Condition | None:
         """Find a top-level predicate on column whose operator this scan can apply.
 
-        Nested OR arms are not probes. The planner only indexes a top-level
-        AND conjunct, and the first nested equality is a different predicate.
+        Nested OR arms are not probes. Parentheses wrap an AND conjunct in
+        its own WhereClause, and that comparison is still this scan's probe.
         """
         if not where:
             return None
 
-        for cond in where.conditions:
-            if (
-                isinstance(cond, Condition)
-                and cond.column == column
-                and not cond.negated
-                and cond.operator in operators
-            ):
+        for cond in where.and_conjuncts():
+            if cond.column == column and not cond.negated and cond.operator in operators:
                 return cond
 
         return None

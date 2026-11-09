@@ -67,6 +67,16 @@ class TestDatabaseLifecycle:
         table = db.get_table('products')
         assert table.primary_key == 'id'
 
+    def test_sql_rejects_null_primary_key(self):
+        """PRIMARY KEY NULL is a contradiction, so CREATE does not build the table."""
+        db = MiniDB()
+        with pytest.raises(InvalidQueryError, match=r"PRIMARY KEY column 'id' cannot be NULL"):
+            db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY NULL)')
+        assert 't' not in db
+
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY NOT NULL)')
+        assert 't' in db
+
     def test_sql_rejects_second_primary_key(self):
         """CREATE TABLE with two PRIMARY KEY columns raises ColumnError."""
         db = MiniDB()
