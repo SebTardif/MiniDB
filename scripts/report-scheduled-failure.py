@@ -12,7 +12,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 LABEL_DEFAULTS: dict[str, tuple[str, str]] = {
     'nightly-failure': ('B60205', 'Scheduled CI failure'),
@@ -465,7 +465,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.today:
         today = date.fromisoformat(args.today)
     else:
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
     labels = args.label or ['nightly-failure', 'ready']
     assignee = normalize_assignee(args.assignee or '')
 
