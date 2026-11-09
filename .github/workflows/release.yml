@@ -13,19 +13,46 @@ permissions:
   contents: read
 
 jobs:
-  # Recipe A/E: do not re-run the product test matrix on every main push.
-  # PR CI already tested the tree. This job is release-please-equivalent
-  # (python-semantic-release) plus one trusted publish compile.
-  release:
-    name: Semantic Release
+  # One release-please pull tracks main. A later feat updates that
+  # pull instead of opening chore/release-<version> beside it.
+  # This repo has no GitHub App, so the pull is opened with
+  # GITHUB_TOKEN. Merging it is the release. Tag and GitHub Release
+  # are created here. PyPI stays continue-on-error because the
+  # project name minidb belongs to another package.
+  release-please:
+    name: Release Please
+    if: github.repository_owner == 'sebtardif'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Release Please
+        id: rp
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    name: Publish
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: github.repository_owner == 'sebtardif'
     permissions:
       contents: write
       id-token: write
-      pull-requests: write
-
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -34,73 +61,26 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: ./.github/actions/setup-python
         with:
           python-version: "3.13"
 
-      # main requires a pull request. Commit locally, then open
-      # chore/release-<version>. Tag and publish only after that merges.
-      # v10.7 writes Actions outputs when GITHUB_OUTPUT is set, and it
-      # requires commit_sha unless it also creates a tag. Unset that
-      # variable so the CLI only makes the local commit.
-      - name: Python Semantic Release
-        id: release
-        if: github.event_name != 'push' || !startsWith(github.event.head_commit.message || '', 'chore(release):')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          pip install "python-semantic-release==10.7.0"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          before="$(git rev-parse HEAD)"
-          env -u GITHUB_OUTPUT semantic-release -v version --commit --no-tag --no-push --no-vcs-release --skip-build
-          after="$(git rev-parse HEAD)"
-          version="$(python3 -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])')"
-          if [ "$before" != "$after" ]; then
-            echo "released=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "released=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-
-      - name: Open release pull request
-        if: steps.release.outputs.released == 'true'
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/open-release-pr.sh
-
-      - name: Publish GitHub Release
-        if: github.event_name == 'push' && startsWith(github.event.head_commit.message || '', 'chore(release):')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/publish-merged-release.sh
-
       - name: Build package
-        if: github.event_name == 'push' && startsWith(github.event.head_commit.message || '', 'chore(release):')
         run: pip install build && python -m build
 
       - name: Publish to PyPI
-        if: github.event_name == 'push' && startsWith(github.event.head_commit.message || '', 'chore(release):')
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
         continue-on-error: true
         with:
           skip-existing: true
 
       - name: Apply curated release notes
-        if: github.event_name == 'push' && startsWith(github.event.head_commit.message || '', 'chore(release):')
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
           RELEASE_NOTES: ${{ vars.RELEASE_NOTES }}
           RELEASE_NOTES_TAG: ${{ vars.RELEASE_NOTES_TAG }}
-        run: |
-          version="$(python3 -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])')"
-          TAG="v${version}" bash scripts/apply-release-notes.sh
+        run: bash scripts/apply-release-notes.sh

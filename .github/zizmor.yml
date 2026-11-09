@@ -9,8 +9,8 @@ rules:
     ignore:
       - dependabot-auto-merge.yml
       - pr-title.yml
-  # Semantic Release pushes the tag and changelog. The checkout token
-  # has to stay available to later steps.
+  # release-please creates the tag from this workflow. The checkout
+  # token has to stay available to later steps.
   artipacked:
     ignore:
       - release.yml

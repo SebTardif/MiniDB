@@ -40,7 +40,7 @@ python -m pytest tests/ --cov=minidb --cov-report=term-missing
 ## Commit Message Convention
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/)
-for automatic versioning via semantic-release.
+for automatic versioning via release-please.
 
 Allowed prefixes: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`,
 `test`, `build`, `ci`, `chore`, `revert`.

@@ -203,8 +203,7 @@ jobs:
         run: |
           python3 scripts/test_apply_release_notes.py
           python3 scripts/test_workflow_triggers.py
-          python3 scripts/test_open_release_pr.py
-          python3 scripts/test_publish_merged_release.py
+          python3 scripts/test_release_please.py
           python3 scripts/test_check_dco.py
           python3 scripts/test_report_scheduled_failure.py
 
