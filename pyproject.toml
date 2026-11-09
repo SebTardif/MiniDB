@@ -116,6 +116,10 @@ branch = "main"
 commit_message = "chore(release): v{version}"
 build_command = "pip install build && python -m build"
 
+[tool.semantic_release.changelog]
+mode = "update"
+insertion_flag = "<!-- version list -->"
+
 [tool.semantic_release.changelog.default_templates]
 changelog_file = "CHANGELOG.md"
 
