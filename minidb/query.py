@@ -307,19 +307,14 @@ class QueryExecutor:
     def _find_index_condition(self, where: WhereClause, column: str, operators: tuple[str, ...]) -> Condition | None:
         """Find a top-level predicate on column whose operator this scan can apply.
 
-        Nested OR arms are not probes. The planner only indexes a top-level
-        AND conjunct, and the first nested equality is a different predicate.
+        Nested OR arms are not probes. Parentheses wrap an AND conjunct in
+        its own WhereClause, and that comparison is still this scan's probe.
         """
         if not where:
             return None
 
-        for cond in where.conditions:
-            if (
-                isinstance(cond, Condition)
-                and cond.column == column
-                and not cond.negated
-                and cond.operator in operators
-            ):
+        for cond in where.and_conjuncts():
+            if cond.column == column and not cond.negated and cond.operator in operators:
                 return cond
 
         return None
@@ -943,6 +938,12 @@ class QueryExecutor:
             if not table.schema.has_column(col):
                 raise ColumnNotFoundError(col, query.table)
 
+        seen_columns: set[str] = set()
+        for col in query.columns:
+            if col in seen_columns:
+                raise InvalidQueryError(f"Duplicate column name '{col}'")
+            seen_columns.add(col)
+
         row = dict(zip(query.columns, query.values, strict=True))
 
         row_id = table.insert(row)
@@ -955,6 +956,13 @@ class QueryExecutor:
 
         table = self.tables[query.table]
 
+        validated_updates: dict[str, Any] = {}
+        for col, value in query.set_clause.items():
+            column = table.schema.get_column(col)
+            if column is None:
+                raise ColumnNotFoundError(col, query.table)
+            validated_updates[col] = column.validate(value)
+
         # Find matching rows
         known_tables = {query.table}
         self._reject_unknown_where(query.where, known_tables, query.table)
@@ -965,7 +973,7 @@ class QueryExecutor:
             row_ids.add(row_id)
 
         # Update rows
-        return table.update_rows(row_ids, query.set_clause)
+        return table.update_rows(row_ids, validated_updates)
 
     def execute_delete(self, query: DeleteQuery) -> int:
         """Execute a DELETE query."""

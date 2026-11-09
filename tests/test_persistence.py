@@ -6,6 +6,7 @@ import tempfile
 import pytest
 
 from minidb import Column, ColumnType, MiniDB
+from minidb.errors import DuplicateKeyError, TypeMismatchError
 
 
 class TestPersistence:
@@ -199,6 +200,21 @@ class TestPersistence:
         finally:
             os.unlink(filepath)
 
+    def test_load_rejects_non_utf8(self):
+        """A file that is not UTF-8 is a read error, not UnicodeDecodeError."""
+        from minidb.errors import FileReadError
+
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.json', delete=False) as f:
+            filepath = f.name
+            f.write(b'\xff\xfe not json')
+
+        try:
+            with pytest.raises(FileReadError) as exc_info:
+                MiniDB.load(filepath)
+            assert 'UTF-8' in str(exc_info.value)
+        finally:
+            os.unlink(filepath)
+
     def test_persistence_write_to_readonly_path(self):
         """Test saving to an unwritable path raises error."""
         from minidb.errors import FileWriteError
@@ -302,5 +318,59 @@ class TestPersistence:
             assert table.get_row_by_id(0) == {'id': 1, 'name': 'Alice'}
             assert table.get_row_by_id(1) == {'id': 2, 'name': 'Bob'}
             assert table.get_row_by_id(2) is None
+        finally:
+            os.unlink(filepath)
+
+    def test_load_rejects_duplicate_primary_key(self):
+        """A hand-edited snapshot cannot contain two rows with the same id."""
+        import json
+
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            filepath = f.name
+
+        try:
+            db.save(filepath)
+            with open(filepath, encoding='utf-8') as f:
+                saved = json.load(f)
+            users = saved['tables']['users']
+            users['rows'].append({'id': 1, 'name': 'dup'})
+            users['row_ids'].append(1)
+            users['next_row_id'] = 2
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(saved, f)
+
+            with pytest.raises(DuplicateKeyError):
+                MiniDB.load(filepath)
+        finally:
+            os.unlink(filepath)
+
+    def test_load_rejects_untyped_primary_key(self):
+        """A primary key the column cannot store raises, instead of TypeError."""
+        import json
+
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            filepath = f.name
+
+        try:
+            db.save(filepath)
+            with open(filepath, encoding='utf-8') as f:
+                saved = json.load(f)
+            users = saved['tables']['users']
+            users['rows'].append({'id': 'x', 'name': 'bad'})
+            users['row_ids'].append(1)
+            users['next_row_id'] = 2
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(saved, f)
+
+            with pytest.raises(TypeMismatchError):
+                MiniDB.load(filepath)
         finally:
             os.unlink(filepath)

@@ -182,6 +182,44 @@ class TestIndexing:
 
         assert plan.scan_type == ScanType.TABLE_SCAN
 
+    def test_parenthesized_and_uses_primary_key_index(self, monkeypatch):
+        """Parentheses around an indexed comparison still use the index."""
+        from minidb.table import Table
+
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        for i in range(1, 21):
+            db.execute('INSERT INTO users (id, name) VALUES (?, ?)', [i, f'U{i}'])
+        db.execute("UPDATE users SET name = 'U1' WHERE id = 2")
+
+        scans = 0
+        original = Table.scan
+
+        def counting(self):
+            nonlocal scans
+            scans += 1
+            return original(self)
+
+        monkeypatch.setattr(Table, 'scan', counting)
+
+        assert 'index_scan' in db.explain("SELECT * FROM users WHERE (id = 1) AND name = 'U1'")
+        scans = 0
+        assert db.query("SELECT id FROM users WHERE (id = 1) AND name = 'U1'") == [{'id': 1}]
+        assert scans == 0
+
+        scans = 0
+        assert db.query("SELECT id FROM users WHERE ((users.id = 1)) AND name = 'U1'") == [{'id': 1}]
+        assert scans == 0
+
+        scans = 0
+        rows = db.query('SELECT id FROM users WHERE (id >= 10) AND (id <= 12)')
+        assert [row['id'] for row in rows] == [10, 11, 12]
+        assert scans == 0
+        assert 'index_range_scan' in db.explain('SELECT id FROM users WHERE (id >= 10) AND (id <= 12)')
+
+        both = db.query("SELECT id FROM users WHERE (id = 1 OR id = 2) AND name = 'U1'")
+        assert sorted(row['id'] for row in both) == [1, 2]
+
     def test_index_updated_on_insert(self):
         """Test that index is updated when rows are inserted."""
         db = MiniDB()

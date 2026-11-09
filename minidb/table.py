@@ -246,7 +246,9 @@ class Table:
         """Deserialize table from a dictionary."""
         schema = Schema.from_dict(data['schema'])
         table = cls(name=data['name'], schema=schema)
-        table._rows = data['rows']
+        # Same checks as insert. A hand-edited file must not keep two primary
+        # keys or a value the column cannot store.
+        table._rows = [schema.validate_row(row, allow_missing=True) for row in data['rows']]
         table._next_row_id = data.get('next_row_id', len(table._rows))
 
         # Files written before row_ids existed keep 0..n-1.
@@ -256,13 +258,17 @@ class Table:
         else:
             table._row_ids = list(range(len(table._rows)))
 
-        # Rebuild indexes
-        if table.schema.primary_key:
-            index = table._index_manager.get_index(table.schema.primary_key)
-            if index:
-                index.rebuild(table._rows, table._row_ids)
-            else:
-                index = table._index_manager.create_index(table.schema.primary_key)
-                index.rebuild(table._rows, table._row_ids)
+        pk = table.schema.primary_key
+        if pk:
+            index = table._index_manager.get_index(pk)
+            if index is None:
+                index = table._index_manager.create_index(pk)
+            for row, row_id in zip(table._rows, table._row_ids, strict=True):
+                value = row.get(pk)
+                if value is None:
+                    continue
+                if index.has_value(value):
+                    raise DuplicateKeyError(value)
+                index.insert(value, row_id)
 
         return table

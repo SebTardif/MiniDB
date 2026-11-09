@@ -2,7 +2,15 @@
 
 import pytest
 
-from minidb import Column, ColumnNotFoundError, ColumnType, DuplicateKeyError, InvalidQueryError, MiniDB
+from minidb import (
+    Column,
+    ColumnNotFoundError,
+    ColumnType,
+    DuplicateKeyError,
+    InvalidQueryError,
+    MiniDB,
+    TypeMismatchError,
+)
 
 
 class TestCRUD:
@@ -73,6 +81,54 @@ class TestCRUD:
         with pytest.raises(ColumnNotFoundError):
             db.execute("INSERT INTO users (id, nope) VALUES (1, 'x')")
         assert db.get_table('users').row_count == 0
+
+    def test_update_unknown_set_column_matches_nothing(self, db):
+        """A SET typo raises ColumnNotFoundError even when WHERE matches nothing."""
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")
+
+        with pytest.raises(ColumnNotFoundError):
+            db.execute("UPDATE users SET nam = 'b' WHERE id = 2")
+
+        row = db.get_table('users').get_row_by_id(0)
+        assert row['id'] == 1
+        assert row['name'] == 'Alice'
+
+    def test_update_bad_set_type_matches_nothing(self, db):
+        """A value the column cannot store raises TypeMismatchError even when WHERE matches nothing."""
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")
+
+        with pytest.raises(TypeMismatchError):
+            db.execute("UPDATE users SET id = 'x' WHERE id = 2")
+
+        row = db.get_table('users').get_row_by_id(0)
+        assert row['id'] == 1
+        assert row['name'] == 'Alice'
+
+    def test_insert_duplicate_column_name(self, db):
+        """Repeated INSERT columns raise InvalidQueryError and insert nothing."""
+        with pytest.raises(InvalidQueryError, match=r"Duplicate column name 'id'"):
+            db.execute('INSERT INTO users (id, id) VALUES (1, 2)')
+        assert db.get_table('users').row_count == 0
+
+    def test_update_duplicate_set_column(self, db):
+        """Repeated SET columns raise InvalidQueryError and leave the row unchanged."""
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")
+
+        with pytest.raises(InvalidQueryError, match=r"Duplicate column name 'name'"):
+            db.execute("UPDATE users SET name = 'kept', name = 'dropped' WHERE id = 1")
+
+        row = db.get_table('users').get_row_by_id(0)
+        assert row['name'] == 'Alice'
+
+    def test_update_matches_nothing_returns_zero(self, db):
+        """A valid UPDATE that matches no rows still returns 0."""
+        db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")
+
+        affected = db.execute("UPDATE users SET name = 'b' WHERE id = 2")
+
+        assert affected == 0
+        row = db.get_table('users').get_row_by_id(0)
+        assert row['name'] == 'Alice'
 
     def test_insert_matching_column_list(self, db):
         """A matching column and value list still inserts the row."""

@@ -55,6 +55,8 @@ def _deserialize(filepath: str) -> dict[str, Table]:
         raise FileReadError(filepath, 'File not found') from e
     except OSError as e:
         raise FileReadError(filepath, str(e)) from e
+    except UnicodeDecodeError as e:
+        raise FileReadError(filepath, f'File is not UTF-8: {e}') from e
     except json.JSONDecodeError as e:
         raise FileReadError(filepath, f'Invalid JSON: {e}') from e
 

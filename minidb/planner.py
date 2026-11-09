@@ -99,16 +99,11 @@ class QueryPlanner:
         Returns:
             Tuple of (column, operator, value) or None
         """
-        # For AND conditions, find first index-usable condition
-        if where.operator == 'AND':
-            for cond in where.conditions:
-                result = self._check_condition_for_index(cond)
-                if result:
-                    return result
-        # For OR conditions, all must use same index (rare)
-        else:
-            # For simplicity, don't use index for OR conditions
-            pass
+        # OR is not one index probe. Parentheses keep each AND conjunct nested.
+        for cond in where.and_conjuncts():
+            result = self._check_condition_for_index(cond)
+            if result:
+                return result
 
         return None
 

@@ -62,6 +62,17 @@ class WorkflowTriggerTests(unittest.TestCase):
         self.assertIn('merge_group:', _on_block(security))
         self.assertIn('CodeQL (${{ matrix.language }})', security)
 
+    def test_workflows_filter_covers_scripts_and_actionlint(self) -> None:
+        text = (WORKFLOWS / 'ci.yml').read_text(encoding='utf-8')
+        marker = '\n            workflows:\n'
+        block = text.split(marker, 1)[1].split('\n  lint:', 1)[0]
+        self.assertIn("- 'scripts/**'", block)
+        self.assertIn("- '.github/actionlint.yaml'", block)
+        self.assertIn("- '.github/workflows/**'", block)
+        self.assertIn("- '.github/actions/**'", block)
+        self.assertIn("- '.github/zizmor.yml'", block)
+        self.assertNotIn("- 'scripts/test_check_dco.py'", block)
+
     def test_ci_gate_requires_workflow_sanity(self) -> None:
         text = (WORKFLOWS / 'ci.yml').read_text(encoding='utf-8')
         on_block = _on_block(text)
