@@ -111,6 +111,14 @@ class TestDatabaseLifecycle:
         assert schema.primary_key == 'a'
         assert schema.column_names == ['a']
 
+    def test_add_column_rejects_duplicate_name(self):
+        """A second column with the same name raises ColumnError and changes nothing."""
+        schema = Schema(columns=[Column('a', ColumnType.INTEGER)])
+        with pytest.raises(ColumnError, match="Duplicate column name 'a'"):
+            schema.add_column(Column('a', ColumnType.STRING))
+        assert schema.column_names == ['a']
+        assert schema.get_column('a').type == ColumnType.INTEGER
+
     def test_single_primary_key_rejects_duplicate_insert(self):
         """One PRIMARY KEY still rejects a duplicate key and allows a repeated non-key."""
         db = MiniDB()

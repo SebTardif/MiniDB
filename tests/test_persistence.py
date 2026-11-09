@@ -1,12 +1,13 @@
 """Tests for persistence functionality."""
 
+import json
 import os
 import tempfile
 
 import pytest
 
 from minidb_sql import Column, ColumnType, MiniDB
-from minidb_sql.errors import DuplicateKeyError, TypeMismatchError
+from minidb_sql.errors import DuplicateKeyError, FileReadError, NullValueError, TypeMismatchError
 
 
 class TestPersistence:
@@ -374,3 +375,78 @@ class TestPersistence:
                 MiniDB.load(filepath)
         finally:
             os.unlink(filepath)
+
+    def _load_edited(self, payload):
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as handle:
+            filepath = handle.name
+        try:
+            if isinstance(payload, str):
+                with open(filepath, 'w', encoding='utf-8') as handle:
+                    handle.write(payload)
+            else:
+                with open(filepath, 'w', encoding='utf-8') as handle:
+                    json.dump(payload, handle)
+            return MiniDB.load(filepath)
+        finally:
+            os.unlink(filepath)
+
+    def _saved_users(self):
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Ada')")
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as handle:
+            filepath = handle.name
+        try:
+            db.save(filepath)
+            with open(filepath, encoding='utf-8') as handle:
+                return json.load(handle)
+        finally:
+            os.unlink(filepath)
+
+    def test_load_rejects_a_json_value_that_is_not_an_object(self):
+        """A parsed array, null, or number is FileReadError."""
+        for payload in ([], None, 1, {'version': '1.0', 'tables': None}):
+            with pytest.raises(FileReadError):
+                self._load_edited(payload)
+
+    def test_load_accepts_sql_type_alias(self):
+        """A hand edit that stores INT, the SQL spelling, still loads."""
+        saved = self._saved_users()
+        saved['tables']['users']['schema']['columns'][0]['type'] = 'INT'
+        loaded = self._load_edited(saved)
+        assert loaded.query('SELECT id, name FROM users') == [{'id': 1, 'name': 'Ada'}]
+
+    def test_load_rejects_unknown_snapshot_type(self):
+        saved = self._saved_users()
+        saved['tables']['users']['schema']['columns'][0]['type'] = 'BLOB'
+        with pytest.raises(FileReadError, match='BLOB'):
+            self._load_edited(saved)
+
+    def test_load_rejects_a_table_missing_its_schema(self):
+        saved = self._saved_users()
+        del saved['tables']['users']['schema']
+        with pytest.raises(FileReadError, match='schema'):
+            self._load_edited(saved)
+
+    def test_load_rejects_a_row_that_is_not_an_object(self):
+        """A number row is FileReadError. A list row stays NullValueError."""
+        saved = self._saved_users()
+        saved['tables']['users']['rows'] = [1]
+        with pytest.raises(FileReadError):
+            self._load_edited(saved)
+
+        saved = self._saved_users()
+        saved['tables']['users']['rows'] = [['Ada']]
+        with pytest.raises(NullValueError):
+            self._load_edited(saved)
+
+    def test_load_rejects_non_integer_row_ids(self):
+        saved = self._saved_users()
+        saved['tables']['users']['row_ids'] = [[0]]
+        with pytest.raises(FileReadError, match='row_ids'):
+            self._load_edited(saved)
+
+        saved = self._saved_users()
+        saved['tables']['users']['next_row_id'] = '2'
+        with pytest.raises(FileReadError, match='next_row_id'):
+            self._load_edited(saved)
