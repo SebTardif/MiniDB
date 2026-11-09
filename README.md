@@ -6,6 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
+[![PyPI](https://img.shields.io/pypi/v/minidb-sql)](https://pypi.org/project/minidb-sql/)
 [![Tests](https://img.shields.io/badge/tests-200%2B%20passing-brightgreen)](https://github.com/SebTardif/MiniDB/tree/main/tests)
 [![Scorecard](https://github.com/SebTardif/MiniDB/actions/workflows/scorecard.yml/badge.svg?event=push)](https://github.com/SebTardif/MiniDB/actions/workflows/scorecard.yml)
 
