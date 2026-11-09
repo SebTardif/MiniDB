@@ -24,6 +24,9 @@ class Column:
             pass
         if self.primary_key:
             self.nullable = False
+        if self.default is not None:
+            # Same cast as INSERT. A raw default skips INTEGER's int() rules.
+            self.default = self.validate(self.default)
 
     def validate(self, value: Any) -> Any:
         """
@@ -141,7 +144,7 @@ class Schema:
                 validated[col.name] = col.validate(row[col.name])
             elif allow_missing:
                 if col.default is not None:
-                    validated[col.name] = col.default
+                    validated[col.name] = col.validate(col.default)
                 elif col.nullable:
                     validated[col.name] = None
                 else:
