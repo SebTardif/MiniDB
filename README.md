@@ -1,6 +1,6 @@
 # MiniDB
 
-[![CI](https://github.com/SebTardif/MiniDB/actions/workflows/ci.yml/badge.svg?event=pull_request)](https://github.com/SebTardif/MiniDB/actions/workflows/ci.yml)
+[![CI](https://github.com/SebTardif/MiniDB/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SebTardif/MiniDB/actions/workflows/ci.yml?query=branch%3Amain)
 [![Security](https://github.com/SebTardif/MiniDB/actions/workflows/security.yml/badge.svg?event=push)](https://github.com/SebTardif/MiniDB/actions/workflows/security.yml)
 [![Release](https://img.shields.io/github/v/release/SebTardif/MiniDB?logo=github&sort=semver)](https://github.com/SebTardif/MiniDB/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
