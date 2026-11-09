@@ -21,7 +21,7 @@ class ReleasePleaseTests(unittest.TestCase):
         self.assertEqual(package['changelog-path'], 'CHANGELOG.md')
         self.assertIs(package['include-component-in-tag'], False)
         paths = [item['path'] for item in package['extra-files']]
-        self.assertIn('minidb/__init__.py', paths)
+        self.assertIn('minidb_sql/__init__.py', paths)
         manifest = json.loads(MANIFEST.read_text(encoding='utf-8'))
         self.assertEqual(manifest['.'], '1.2.0')
 

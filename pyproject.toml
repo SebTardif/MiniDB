@@ -3,7 +3,7 @@ requires = ["setuptools>=84.2.1", "setuptools-scm>=10.3.4"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "minidb"
+name = "minidb-sql"
 version = "1.2.0"
 description = "A miniature in-memory database with SQL-like query support"
 readme = "README.md"
@@ -34,7 +34,7 @@ Changelog = "https://github.com/sebtardif/MiniDB/blob/main/CHANGELOG.md"
 # Setuptools
 # ---------------------------------------------------------------------------
 [tool.setuptools.packages.find]
-include = ["minidb*"]
+include = ["minidb_sql*"]
 
 # ---------------------------------------------------------------------------
 # Ruff – linting & formatting (replaces flake8 + black + isort)
@@ -67,7 +67,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["minidb"]
+known-first-party = ["minidb_sql"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -94,7 +94,7 @@ addopts = "-v --tb=short"
 # Coverage
 # ---------------------------------------------------------------------------
 [tool.coverage.run]
-source = ["minidb"]
+source = ["minidb_sql"]
 branch = true
 
 [tool.coverage.report]

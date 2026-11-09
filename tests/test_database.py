@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import (
+from minidb_sql import (
     Column,
     ColumnError,
     ColumnType,
@@ -14,7 +14,7 @@ from minidb import (
     TableExistsError,
     TableNotFoundError,
 )
-from minidb.parser import parse_sql
+from minidb_sql.parser import parse_sql
 
 
 class TestDatabaseLifecycle:
@@ -185,7 +185,7 @@ class TestDatabaseLifecycle:
 
     def test_query_on_non_select(self):
         """Test that query() raises MiniDBError for non-SELECT statements."""
-        from minidb.errors import MiniDBError
+        from minidb_sql.errors import MiniDBError
 
         db = MiniDB()
         db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
@@ -194,7 +194,7 @@ class TestDatabaseLifecycle:
 
     def test_query_insert_mentions_execute(self):
         """INSERT via query() tells the caller to use execute()."""
-        from minidb.errors import MiniDBError
+        from minidb_sql.errors import MiniDBError
 
         db = MiniDB()
         db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
@@ -255,7 +255,7 @@ class TestExplain:
 
     def test_explain_insert_raises(self):
         """explain() is SELECT-only."""
-        from minidb.errors import MiniDBError
+        from minidb_sql.errors import MiniDBError
 
         db = MiniDB()
         db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')

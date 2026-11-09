@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from minidb import Column, ColumnType, MiniDB
+from minidb_sql import Column, ColumnType, MiniDB
 
 
 class TestPerformance:
@@ -77,7 +77,7 @@ class TestPerformance:
 
     def test_large_primary_key_range(self, large_db, monkeypatch):
         """A primary-key range resolves row ids once, not once per hit."""
-        from minidb.table import Table
+        from minidb_sql.table import Table
 
         calls = 0
         original = Table.get_row_by_id

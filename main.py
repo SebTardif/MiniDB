@@ -12,7 +12,7 @@ Demonstrates all features of MiniDB including:
 - Persistence
 """
 
-from minidb import MiniDB
+from minidb_sql import MiniDB
 
 
 def print_section(title: str):

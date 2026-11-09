@@ -42,7 +42,7 @@ jobs:
         with:
           filters: |
             code:
-              - 'minidb/**'
+              - 'minidb_sql/**'
               - 'tests/**'
               - 'scripts/**'
               - 'pyproject.toml'
@@ -115,7 +115,7 @@ jobs:
         run: pip install mypy
 
       - name: Mypy
-        run: mypy minidb/
+        run: mypy minidb_sql/
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -148,7 +148,7 @@ jobs:
         run: pip install pytest pytest-cov
 
       - name: Run tests with coverage
-        run: pytest tests/ --cov=minidb --cov-report=term-missing --cov-report=xml
+        run: pytest tests/ --cov=minidb_sql --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage
         if: matrix.python-version == '3.13'

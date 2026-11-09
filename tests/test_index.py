@@ -2,9 +2,9 @@
 
 import pytest
 
-from minidb import Column, ColumnType, HashIndex, MiniDB
-from minidb.errors import DuplicateKeyError, TypeMismatchError
-from minidb.planner import QueryPlanner, ScanType
+from minidb_sql import Column, ColumnType, HashIndex, MiniDB
+from minidb_sql.errors import DuplicateKeyError, TypeMismatchError
+from minidb_sql.planner import QueryPlanner, ScanType
 
 
 class TestIndexing:
@@ -122,7 +122,7 @@ class TestIndexing:
         for i in range(10):
             db.execute(f"INSERT INTO users (id, name) VALUES ({i}, 'User{i}')")
 
-        from minidb.parser import parse_sql
+        from minidb_sql.parser import parse_sql
 
         query = parse_sql('SELECT * FROM users WHERE id = 5')
 
@@ -147,7 +147,7 @@ class TestIndexing:
         for i in range(10):
             db.execute(f"INSERT INTO users (id, name) VALUES ({i}, 'User{i}')")
 
-        from minidb.parser import parse_sql
+        from minidb_sql.parser import parse_sql
 
         query = parse_sql('SELECT * FROM users WHERE id > 5')
 
@@ -172,7 +172,7 @@ class TestIndexing:
         for i in range(10):
             db.execute(f"INSERT INTO users (id, name) VALUES ({i}, 'User{i}')")
 
-        from minidb.parser import parse_sql
+        from minidb_sql.parser import parse_sql
 
         query = parse_sql("SELECT * FROM users WHERE name = 'User5'")
 
@@ -184,7 +184,7 @@ class TestIndexing:
 
     def test_parenthesized_and_uses_primary_key_index(self, monkeypatch):
         """Parentheses around an indexed comparison still use the index."""
-        from minidb.table import Table
+        from minidb_sql.table import Table
 
         db = MiniDB()
         db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')

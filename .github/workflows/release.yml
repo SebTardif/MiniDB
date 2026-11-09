@@ -13,12 +13,10 @@ permissions:
   contents: read
 
 jobs:
-  # One release-please pull tracks main. A later feat updates that
-  # pull instead of opening chore/release-<version> beside it.
-  # This repo has no GitHub App, so the pull is opened with
-  # GITHUB_TOKEN. Merging it is the release. Tag and GitHub Release
-  # are created here. PyPI stays continue-on-error because the
-  # project name minidb belongs to another package.
+  # One release-please pull tracks main. The App token is a
+  # different identity from github-actions, so this pull gets CI.
+  # Merging it is the release. PyPI trusted publishing uses the
+  # minidb-sql project.
   release-please:
     name: Release Please
     if: github.repository_owner == 'sebtardif'
@@ -36,11 +34,20 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AUTO_APPROVE_CLIENT_ID }}
+          private-key: ${{ secrets.AUTO_APPROVE_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Release Please
         id: rp
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
@@ -50,6 +57,7 @@ jobs:
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: pypi
     permissions:
       contents: write
       id-token: write
@@ -61,6 +69,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-python
         with:
@@ -71,7 +81,6 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
-        continue-on-error: true
         with:
           skip-existing: true
 

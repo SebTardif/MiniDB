@@ -39,7 +39,7 @@ jobs:
         with:
           filters: |
             code:
-              - 'minidb/**'
+              - 'minidb_sql/**'
               - 'tests/**'
               - 'scripts/**'
               - 'pyproject.toml'

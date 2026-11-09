@@ -13,7 +13,7 @@ Features:
 - Persistence to JSON files
 
 Example:
-    from minidb import MiniDB, Column, ColumnType
+    from minidb_sql import MiniDB, Column, ColumnType
 
     # Create database
     db = MiniDB()
