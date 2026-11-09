@@ -5,8 +5,8 @@ import tempfile
 
 import pytest
 
-from minidb import Column, ColumnType, MiniDB
-from minidb.errors import DuplicateKeyError, TypeMismatchError
+from minidb_sql import Column, ColumnType, MiniDB
+from minidb_sql.errors import DuplicateKeyError, TypeMismatchError
 
 
 class TestPersistence:
@@ -163,7 +163,7 @@ class TestPersistence:
 
     def test_persistence_file_not_found(self):
         """Test loading from non-existent file raises error."""
-        from minidb.errors import FileReadError
+        from minidb_sql.errors import FileReadError
 
         with pytest.raises(FileReadError):
             MiniDB.load('/nonexistent/path/to/file.json')
@@ -172,7 +172,7 @@ class TestPersistence:
         """Test loading a file with incompatible version raises error."""
         import json
 
-        from minidb.errors import VersionMismatchError
+        from minidb_sql.errors import VersionMismatchError
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             filepath = f.name
@@ -187,7 +187,7 @@ class TestPersistence:
 
     def test_persistence_invalid_json(self):
         """Test loading a file with invalid JSON raises error."""
-        from minidb.errors import FileReadError
+        from minidb_sql.errors import FileReadError
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             filepath = f.name
@@ -202,7 +202,7 @@ class TestPersistence:
 
     def test_load_rejects_non_utf8(self):
         """A file that is not UTF-8 is a read error, not UnicodeDecodeError."""
-        from minidb.errors import FileReadError
+        from minidb_sql.errors import FileReadError
 
         with tempfile.NamedTemporaryFile(mode='wb', suffix='.json', delete=False) as f:
             filepath = f.name
@@ -217,7 +217,7 @@ class TestPersistence:
 
     def test_persistence_write_to_readonly_path(self):
         """Test saving to an unwritable path raises error."""
-        from minidb.errors import FileWriteError
+        from minidb_sql.errors import FileWriteError
 
         db = MiniDB()
         with pytest.raises(FileWriteError):
@@ -260,7 +260,7 @@ class TestPersistence:
         """The row id returned by INSERT still finds that row after delete, save, and load."""
         import json
 
-        from minidb.persistence import CURRENT_VERSION
+        from minidb_sql.persistence import CURRENT_VERSION
 
         db = MiniDB()
         db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')

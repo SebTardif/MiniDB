@@ -9,7 +9,7 @@
       "extra-files": [
         {
           "type": "generic",
-          "path": "minidb/__init__.py"
+          "path": "minidb_sql/__init__.py"
         }
       ]
     }

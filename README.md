@@ -34,14 +34,14 @@ A miniature in-memory database with SQL-like query support, built from scratch u
 
 ## Installation
 
-No installation required! MiniDB uses only Python standard library.
-
 ```bash
-# Just clone and use
-git clone https://github.com/SebTardif/MiniDB.git
-cd MiniDB
-python -m pytest tests/ -v  # Run tests
-python main.py              # Run demo
+pip install minidb-sql
+```
+
+The library uses only the Python standard library. `pip install minidb` is a different project.
+
+```python
+from minidb_sql import MiniDB
 ```
 
 ## Quick Start
@@ -52,7 +52,7 @@ Both accept an optional `params` sequence for `?` placeholders. Values are bound
 after parse, not interpolated into the SQL string.
 
 ```python
-from minidb import MiniDB, Column, ColumnType
+from minidb_sql import MiniDB, Column, ColumnType
 
 # Create database
 db = MiniDB()
@@ -280,7 +280,7 @@ db.drop_table('table_name')
 ## Architecture
 
 ```
-minidb/
+minidb_sql/
 ├── __init__.py      # Public API exports
 ├── database.py      # MiniDB main class
 ├── table.py         # Table storage
@@ -306,7 +306,7 @@ python -m pytest tests/ -v
 python -m pytest tests/test_queries.py -v
 
 # Run with coverage
-python -m pytest tests/ -v --cov=minidb
+python -m pytest tests/ -v --cov=minidb_sql
 ```
 
 ### Test Categories

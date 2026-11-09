@@ -7,8 +7,8 @@ Stdlib-only in-memory SQL engine. Python 3.11+.
 ```bash
 ruff check .
 ruff format --check .
-mypy minidb/
-python -m pytest tests/ --cov=minidb --cov-report=term-missing
+mypy minidb_sql/
+python -m pytest tests/ --cov=minidb_sql --cov-report=term-missing
 ```
 
 ## Commits

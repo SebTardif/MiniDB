@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import Column, ColumnType, InvalidQueryError, MiniDB, TableNotFoundError
+from minidb_sql import Column, ColumnType, InvalidQueryError, MiniDB, TableNotFoundError
 
 
 class TestJoins:
@@ -241,7 +241,7 @@ class TestJoins:
 
     def test_join_unknown_on_column(self, db):
         """JOIN ON a missing column raises ColumnNotFoundError."""
-        from minidb.errors import ColumnNotFoundError
+        from minidb_sql.errors import ColumnNotFoundError
 
         with pytest.raises(ColumnNotFoundError):
             db.query("""

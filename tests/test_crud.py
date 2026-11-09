@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import (
+from minidb_sql import (
     Column,
     ColumnNotFoundError,
     ColumnType,

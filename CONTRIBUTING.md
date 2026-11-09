@@ -15,7 +15,7 @@ cd MiniDB
 pip install ruff==0.16.6 mypy pytest pytest-cov
 
 # Verify everything works
-python -m pytest tests/ --cov=minidb --cov-report=term-missing
+python -m pytest tests/ --cov=minidb_sql --cov-report=term-missing
 python main.py
 ```
 
@@ -31,10 +31,10 @@ ruff check .
 ruff format --check .
 
 # Type check
-mypy minidb/
+mypy minidb_sql/
 
 # Tests
-python -m pytest tests/ --cov=minidb --cov-report=term-missing
+python -m pytest tests/ --cov=minidb_sql --cov-report=term-missing
 ```
 
 ## Commit Message Convention
@@ -59,7 +59,7 @@ Examples:
 ## Project Structure
 
 ```
-minidb/
+minidb_sql/
   database.py      # MiniDB main class (facade)
   parser.py        # SQL lexer and parser
   query.py         # Query execution engine
@@ -78,8 +78,8 @@ tests/
 
 Copy an existing clause such as LIMIT or LEFT JOIN:
 
-1. TokenType in minidb/types.py
-2. Lexer.KEYWORDS in minidb/parser.py
+1. TokenType in minidb_sql/types.py
+2. Lexer.KEYWORDS in minidb_sql/parser.py
 3. AST field on SelectQuery / relevant dataclass
 4. Parse slot in `_parse_select` (before `_expect_end`)
 5. Execution step in QueryExecutor

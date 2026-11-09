@@ -2,7 +2,7 @@
 
 import pytest
 
-from minidb import Column, ColumnNotFoundError, ColumnType, InvalidQueryError, MiniDB, TypeMismatchError
+from minidb_sql import Column, ColumnNotFoundError, ColumnType, InvalidQueryError, MiniDB, TypeMismatchError
 
 
 class TestAggregations:

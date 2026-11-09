@@ -5,8 +5,8 @@ import tempfile
 
 import pytest
 
-from minidb import Column, ColumnType, MiniDB
-from minidb.errors import ColumnError, ColumnNotFoundError, InvalidQueryError, SyntaxError_, TypeMismatchError
+from minidb_sql import Column, ColumnType, MiniDB
+from minidb_sql.errors import ColumnError, ColumnNotFoundError, InvalidQueryError, SyntaxError_, TypeMismatchError
 
 
 class TestParserErrors:
@@ -110,7 +110,7 @@ class TestTypeValidation:
 
     def test_null_value_on_primary_key(self):
         """Test inserting NULL into a non-nullable primary key column."""
-        from minidb.errors import NullValueError
+        from minidb_sql.errors import NullValueError
 
         db = MiniDB()
         db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
@@ -128,7 +128,7 @@ class TestTypeValidation:
 
     def test_duplicate_primary_key_error_message(self):
         """Test that DuplicateKeyError includes the key value."""
-        from minidb.errors import DuplicateKeyError
+        from minidb_sql.errors import DuplicateKeyError
 
         db = MiniDB()
         db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)')
