@@ -80,7 +80,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install --require-hashes --only-binary=:all: -r .github/requirements/ruff.txt
+        run: 'pip install --require-hashes --only-binary=:all: -r .github/requirements/ruff.txt'
 
       - name: Ruff check
         run: ruff check .
@@ -112,7 +112,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install --require-hashes --only-binary=:all: -r .github/requirements/typecheck.txt
+        run: 'pip install --require-hashes --only-binary=:all: -r .github/requirements/typecheck.txt'
 
       - name: Mypy
         run: mypy minidb_sql/
@@ -145,7 +145,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install --require-hashes --only-binary=:all: -r .github/requirements/test.txt
+        run: 'pip install --require-hashes --only-binary=:all: -r .github/requirements/test.txt'
 
       - name: Run tests with coverage
         run: pytest tests/ --cov=minidb_sql --cov-report=term-missing --cov-report=xml

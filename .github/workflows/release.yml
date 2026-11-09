@@ -77,7 +77,7 @@ jobs:
           python-version: "3.13"
 
       - name: Build package
-        run: pip install --require-hashes --only-binary=:all: -r .github/requirements/build.txt && python -m build
+        run: 'pip install --require-hashes --only-binary=:all: -r .github/requirements/build.txt && python -m build'
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
