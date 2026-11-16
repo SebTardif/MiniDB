@@ -47,7 +47,9 @@ from minidb_sql import MiniDB
 
 ## Quick Start
 
-`execute()` runs any statement and returns a row id, an affected-row count, or None.
+`execute()` runs any statement and returns rows for SELECT, a row id for INSERT,
+an affected-row count for UPDATE and DELETE, or None for CREATE, DROP, BEGIN,
+COMMIT, and ROLLBACK.
 `query()` is SELECT-only and returns rows.
 Both accept an optional `params` sequence for `?` placeholders. Values are bound
 after parse, not interpolated into the SQL string.
