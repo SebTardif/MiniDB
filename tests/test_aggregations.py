@@ -62,6 +62,31 @@ class TestAggregations:
         with pytest.raises(TypeMismatchError):
             db.query('SELECT SUM(name) FROM names')
 
+    def test_sum_of_boolean_raises(self):
+        """SUM and AVG must not add True as 1. COUNT still counts."""
+        db = MiniDB()
+        db.execute('CREATE TABLE flags (id INTEGER PRIMARY KEY, flag BOOLEAN)')
+        assert db.query('SELECT SUM(flag) FROM flags') == [{'SUM(flag)': None}]
+        assert db.query('SELECT AVG(flag) FROM flags') == [{'AVG(flag)': None}]
+        assert db.query('SELECT COUNT(flag) FROM flags') == [{'COUNT(flag)': 0}]
+
+        db.execute('INSERT INTO flags (id, flag) VALUES (1, NULL)')
+        assert db.query('SELECT SUM(flag) FROM flags') == [{'SUM(flag)': None}]
+        assert db.query('SELECT AVG(flag) FROM flags') == [{'AVG(flag)': None}]
+
+        db.execute('INSERT INTO flags (id, flag) VALUES (2, TRUE)')
+        db.execute('INSERT INTO flags (id, flag) VALUES (3, TRUE)')
+        db.execute('INSERT INTO flags (id, flag) VALUES (4, FALSE)')
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT SUM(flag) FROM flags')
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT AVG(flag) FROM flags')
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT flag, SUM(flag) FROM flags GROUP BY flag')
+        assert db.query('SELECT COUNT(flag) FROM flags') == [{'COUNT(flag)': 3}]
+        assert db.query('SELECT MIN(flag) FROM flags') == [{'MIN(flag)': False}]
+        assert db.query('SELECT MAX(flag) FROM flags') == [{'MAX(flag)': True}]
+
     def test_select_star_group_by_rejects_hidden_columns(self, db):
         """SELECT * GROUP BY must not drop columns that were not grouped."""
         with pytest.raises(InvalidQueryError):

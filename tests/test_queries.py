@@ -284,6 +284,66 @@ class TestTypeValidation:
         with pytest.raises(TypeMismatchError, match=r"column 'id'"):
             db.query("SELECT * FROM users WHERE id <= 'x'")
 
+    def test_where_true_on_integer_primary_key_raises(self):
+        """A boolean literal is a type error even when the primary-key index misses."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER, f FLOAT, s STRING, flag BOOLEAN)')
+        mismatches = (
+            'SELECT id FROM t WHERE id = TRUE',
+            'SELECT id FROM t WHERE id != TRUE',
+            'SELECT id FROM t WHERE id > TRUE',
+            'SELECT id FROM t WHERE id >= TRUE',
+            'SELECT id FROM t WHERE id < TRUE',
+            'SELECT id FROM t WHERE id <= TRUE',
+            'SELECT n FROM t WHERE n = TRUE',
+            'SELECT n FROM t WHERE n > TRUE',
+            'SELECT f FROM t WHERE f = TRUE',
+            'SELECT s FROM t WHERE s = TRUE',
+            'SELECT id FROM t WHERE id = 2 AND (n = TRUE)',
+            'SELECT id FROM t WHERE id = TRUE OR id = 2',
+            'SELECT id FROM t WHERE t.id = TRUE',
+        )
+
+        def expect_mismatch() -> None:
+            for sql in mismatches:
+                with pytest.raises(TypeMismatchError):
+                    db.query(sql)
+            with pytest.raises(TypeMismatchError):
+                db.query('SELECT id FROM t WHERE id = ?', [True])
+            with pytest.raises(TypeMismatchError):
+                db.execute('DELETE FROM t WHERE id = TRUE')
+            with pytest.raises(TypeMismatchError):
+                db.execute('UPDATE t SET n = 0 WHERE n = TRUE')
+
+        expect_mismatch()
+        with pytest.raises(TypeMismatchError, match=r"column 'id': expected int, got bool"):
+            db.query('SELECT id FROM t WHERE id = TRUE')
+        with pytest.raises(TypeMismatchError, match=r"column 'f': expected float, got bool"):
+            db.query('SELECT f FROM t WHERE f = TRUE')
+        with pytest.raises(TypeMismatchError, match=r"column 's': expected str, got bool"):
+            db.query('SELECT s FROM t WHERE s = TRUE')
+        assert db.query('SELECT id FROM t WHERE flag = TRUE') == []
+        assert db.query('SELECT id FROM t WHERE id = NULL') == []
+        assert db.query("SELECT id FROM t WHERE s LIKE 'a'") == []
+        assert 'index_scan' in db.explain('SELECT id FROM t WHERE id = 1')
+
+        db.execute("INSERT INTO t (id, n, f, s, flag) VALUES (2, 2, 2.0, 'b', FALSE)")
+        expect_mismatch()
+        assert db.query('SELECT id FROM t WHERE flag = TRUE') == []
+        assert db.query('SELECT id FROM t WHERE flag = FALSE') == [{'id': 2}]
+        assert db.query("SELECT id FROM t WHERE s LIKE 'b'") == [{'id': 2}]
+        assert db.query('SELECT id FROM t WHERE n IS NULL') == []
+        assert db.query('SELECT id FROM t WHERE id = 1') == []
+
+        db.execute("INSERT INTO t (id, n, f, s, flag) VALUES (1, 1, 1.0, 'a', TRUE)")
+        db.execute('INSERT INTO t (id, n) VALUES (3, NULL)')
+        expect_mismatch()
+        assert db.query('SELECT id FROM t WHERE flag = TRUE') == [{'id': 1}]
+        assert db.query('SELECT id FROM t WHERE id = 1') == [{'id': 1}]
+        assert 'index_scan' in db.explain('SELECT id FROM t WHERE id = 1')
+        assert db.query('SELECT id FROM t WHERE n IS NULL') == [{'id': 3}]
+        assert db.query('SELECT id FROM t WHERE n IS NOT NULL ORDER BY id') == [{'id': 1}, {'id': 2}]
+
     def test_where_equality_different_types_is_false(self):
         """Equality of different types stays false and does not raise."""
         db = MiniDB()
