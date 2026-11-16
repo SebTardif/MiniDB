@@ -202,6 +202,8 @@ class QueryExecutor:
             new_rows = []
             for left_id, left_row in left_rows:
                 left_key = self._join_left_value(left_row, left_spec)
+                if left_key is not None and right_index:
+                    self._reject_mismatched_compare(right_column, left_key, next(iter(right_index)))
                 matches = right_index.get(left_key, []) if left_key is not None else []
                 if matches:
                     for _right_id, right_row in matches:

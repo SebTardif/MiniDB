@@ -3,6 +3,7 @@
 import pytest
 
 from minidb_sql import Column, ColumnType, InvalidQueryError, MiniDB, TableNotFoundError
+from minidb_sql.errors import TypeMismatchError
 
 
 class TestJoins:
@@ -405,3 +406,20 @@ class TestJoins:
             LEFT JOIN orders ON users.id = orders.user_id
         """)
         assert len(left) == 6
+
+    def test_join_rejects_int_equal_bool(self):
+        """INTEGER 1 does not join BOOLEAN TRUE. Two TRUE values still join."""
+        db = MiniDB()
+        db.execute('CREATE TABLE nums (id INTEGER PRIMARY KEY, n INTEGER)')
+        db.execute('CREATE TABLE flags (id INTEGER PRIMARY KEY, n BOOLEAN)')
+        db.execute('INSERT INTO nums (id, n) VALUES (1, 1)')
+        db.execute('INSERT INTO flags (id, n) VALUES (10, TRUE)')
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT nums.id, flags.id FROM nums JOIN flags ON nums.n = flags.n')
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT nums.id, flags.id FROM nums LEFT JOIN flags ON nums.n = flags.n')
+
+        db.execute('CREATE TABLE flags2 (id INTEGER PRIMARY KEY, n BOOLEAN)')
+        db.execute('INSERT INTO flags2 (id, n) VALUES (11, TRUE)')
+        matched = db.query('SELECT flags.id, flags2.id FROM flags JOIN flags2 ON flags.n = flags2.n')
+        assert matched == [{'flags.id': 10, 'flags2.id': 11}]
