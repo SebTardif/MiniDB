@@ -108,10 +108,11 @@ results = db.query("""
     SELECT active, COUNT(*), AVG(salary)
     FROM users
     GROUP BY active
-    HAVING COUNT(*) > 1
+    HAVING AVG(salary) > 60000
 """)
 
 # JOINs
+db.execute("INSERT INTO orders (id, user_id, product, total) VALUES (1, 1, 'Book', 80.0)")
 results = db.query("""
     SELECT users.name, orders.product, orders.total
     FROM users
