@@ -22,7 +22,14 @@ from .parser import (
 )
 from .planner import QueryPlanner, ScanType
 from .table import Table
-from .types import QueryResult, Row
+from .types import ColumnType, QueryResult, Row
+
+_COLUMN_SAMPLE: dict[ColumnType, Any] = {
+    ColumnType.INTEGER: 0,
+    ColumnType.FLOAT: 0.0,
+    ColumnType.BOOLEAN: False,
+    ColumnType.STRING: '',
+}
 
 
 def _assign_output(
@@ -88,6 +95,7 @@ class QueryExecutor:
             if join.table not in self.tables:
                 raise TableNotFoundError(join.table)
         self._reject_unknown_query_columns(query, known_tables)
+        self._reject_bool_literal_where(query.where, known_tables)
 
         # Get rows based on query plan (indexed rows with row IDs)
         if query.joins:
@@ -139,9 +147,10 @@ class QueryExecutor:
 
     def _execute_table_scan(self, table: Table, query: SelectQuery) -> list[tuple[int, Row]]:
         """Execute a table scan with optional WHERE filtering."""
+        known_tables = self._known_tables(query)
+        self._reject_bool_literal_where(query.where, known_tables)
         planner = QueryPlanner(table)
         plan = planner.plan_select(query)
-        known_tables = self._known_tables(query)
         rows: list[tuple[int, Row]] = []
         used_index = False
 
@@ -475,6 +484,42 @@ class QueryExecutor:
         except TypeError as exc:
             raise TypeMismatchError(column, type(left).__name__, type(right).__name__) from exc
         return 0
+
+    def _reject_bool_literal_where(self, where: WhereClause | None, known_tables: set[str]) -> None:
+        """Reject a boolean literal compared with a different column type."""
+        if where is None:
+            return
+        for cond in where.conditions:
+            if isinstance(cond, WhereClause):
+                self._reject_bool_literal_where(cond, known_tables)
+                continue
+            if not isinstance(cond, Condition):
+                continue
+            if cond.operator not in ('=', '!=', '>', '>=', '<', '<='):
+                continue
+            if not isinstance(cond.value, bool):
+                continue
+            for sample in self._samples_for_column(cond.column, cond.table_alias, known_tables):
+                self._reject_mismatched_compare(cond.column, sample, cond.value)
+
+    def _samples_for_column(self, column: str, table_alias: str | None, known_tables: set[str]) -> list[Any]:
+        tables: list[Table] = []
+        if table_alias is not None:
+            found = self.tables.get(table_alias)
+            if found is not None:
+                tables.append(found)
+        else:
+            tables.extend(
+                self.tables[name]
+                for name in known_tables
+                if name in self.tables and self.tables[name].schema.has_column(column)
+            )
+        samples: list[Any] = []
+        for table in tables:
+            schema_column = table.schema.get_column(column)
+            if schema_column is not None:
+                samples.append(_COLUMN_SAMPLE[schema_column.type])
+        return samples
 
     def _reject_mismatched_compare(self, column: str, left: Any, right: Any) -> None:
         """Reject comparisons that Python would answer with a different type's rules.
@@ -844,6 +889,11 @@ class QueryExecutor:
         if not values:
             return None
 
+        if func in ('SUM', 'AVG'):
+            for value in values:
+                if isinstance(value, bool):
+                    raise TypeMismatchError(column, 'number', type(value).__name__)
+
         try:
             if func == 'SUM':
                 return sum(values)
@@ -1070,6 +1120,7 @@ class QueryExecutor:
         # Find matching rows
         known_tables = {query.table}
         self._reject_unknown_where(query.where, known_tables, query.table)
+        self._reject_bool_literal_where(query.where, known_tables)
         row_ids = set()
         for row_id, row in table.scan():
             if query.where and not self._evaluate_where(row, query.where, known_tables):
@@ -1089,6 +1140,7 @@ class QueryExecutor:
         # Find matching rows
         known_tables = {query.table}
         self._reject_unknown_where(query.where, known_tables, query.table)
+        self._reject_bool_literal_where(query.where, known_tables)
         row_ids = set()
         for row_id, row in table.scan():
             if query.where and not self._evaluate_where(row, query.where, known_tables):
