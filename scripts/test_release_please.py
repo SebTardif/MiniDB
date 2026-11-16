@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / '.github' / 'workflows' / 'release.yml'
 CONFIG = ROOT / 'release-please-config.json'
 MANIFEST = ROOT / '.release-please-manifest.json'
+PYPROJECT = ROOT / 'pyproject.toml'
 
 
 class ReleasePleaseTests(unittest.TestCase):
@@ -29,7 +31,8 @@ class ReleasePleaseTests(unittest.TestCase):
         self.assertTrue(sections['ci']['hidden'])
         self.assertTrue(sections['chore']['hidden'])
         manifest = json.loads(MANIFEST.read_text(encoding='utf-8'))
-        self.assertEqual(manifest['.'], '1.3.0')
+        project = tomllib.loads(PYPROJECT.read_text(encoding='utf-8'))
+        self.assertEqual(manifest['.'], project['project']['version'])
 
     def test_workflow_uses_one_release_please_pull(self) -> None:
         text = WORKFLOW.read_text(encoding='utf-8')
