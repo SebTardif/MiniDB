@@ -171,8 +171,6 @@ class TestPersistence:
 
     def test_persistence_version_mismatch(self):
         """Test loading a file with incompatible version raises error."""
-        import json
-
         from minidb_sql.errors import VersionMismatchError
 
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -245,8 +243,6 @@ class TestPersistence:
             db.save(filepath)
 
             # Read and verify JSON structure
-            import json
-
             with open(filepath) as f:
                 data = json.load(f)
 
@@ -259,8 +255,6 @@ class TestPersistence:
 
     def test_save_load_preserves_row_ids_after_delete(self):
         """The row id returned by INSERT still finds that row after delete, save, and load."""
-        import json
-
         from minidb_sql.persistence import CURRENT_VERSION
 
         db = MiniDB()
@@ -295,8 +289,6 @@ class TestPersistence:
 
     def test_load_without_row_ids_uses_sequential_ids(self):
         """A file from before row_ids existed still loads with range ids."""
-        import json
-
         db = MiniDB()
         db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
         db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
@@ -324,8 +316,6 @@ class TestPersistence:
 
     def test_load_rejects_duplicate_primary_key(self):
         """A hand-edited snapshot cannot contain two rows with the same id."""
-        import json
-
         db = MiniDB()
         db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
         db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
@@ -351,8 +341,6 @@ class TestPersistence:
 
     def test_load_rejects_untyped_primary_key(self):
         """A primary key the column cannot store raises, instead of TypeError."""
-        import json
-
         db = MiniDB()
         db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
         db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
