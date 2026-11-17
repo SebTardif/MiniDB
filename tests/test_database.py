@@ -454,3 +454,16 @@ class TestTransactions:
         assert db.query('SELECT name FROM users WHERE id = 1')[0]['name'] == 'Alicia'
         db.execute('ROLLBACK')
         assert db.query('SELECT name FROM users WHERE id = 1')[0]['name'] == 'Alice'
+
+    def test_save_during_transaction_leaves_no_file(self, db, tmp_path):
+        """save() must not publish a change that ROLLBACK throws away."""
+        path = tmp_path / 'db.json'
+        db.execute('BEGIN')
+        db.execute("UPDATE users SET name = 'Alicia' WHERE id = 1")
+        with pytest.raises(InvalidQueryError):
+            db.save(str(path))
+        assert not path.exists()
+        db.execute('ROLLBACK')
+        db.save(str(path))
+        loaded = MiniDB.load(str(path))
+        assert loaded.query('SELECT name FROM users')[0]['name'] == 'Alice'

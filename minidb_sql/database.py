@@ -225,7 +225,13 @@ class MiniDB:
 
         Args:
             filepath: Path to the output file
+
+        Raises:
+            InvalidQueryError: If a transaction is open. The file would
+                keep changes that ROLLBACK is supposed to discard.
         """
+        if self._txn_snapshot is not None:
+            raise InvalidQueryError('cannot save while a transaction is in progress')
         _serialize(self._tables, filepath)
 
     @classmethod

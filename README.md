@@ -128,7 +128,7 @@ affected = db.execute('UPDATE users SET salary = 80000.0 WHERE id = 1')
 # DELETE
 affected = db.execute('DELETE FROM users WHERE active = false')
 
-# Snapshot transaction (in-memory only)
+# Snapshot transaction (in-memory only). save() raises until COMMIT or ROLLBACK.
 db.execute('BEGIN')
 db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (3, 'Cara', 40, 90000.0, true)")
 db.execute('ROLLBACK')
