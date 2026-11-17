@@ -947,28 +947,59 @@ class Parser:
         """Parse ORDER BY clause."""
         items = []
         while True:
-            column = self._expect(TokenType.IDENTIFIER).value
-            table_alias = None
-
-            if self._match(TokenType.DOT):
-                self._advance()
-                table_alias = column
-                column = self._expect(TokenType.IDENTIFIER).value
-
-            direction = 'ASC'
-            if self._match(TokenType.ASC):
-                self._advance()
-            elif self._match(TokenType.DESC):
-                self._advance()
-                direction = 'DESC'
-
-            items.append(OrderByItem(column=column, direction=direction, table_alias=table_alias))
+            if self._is_aggregate_call():
+                items.append(self._parse_order_by_aggregate())
+            else:
+                items.append(self._parse_order_by_column())
 
             if not self._match(TokenType.COMMA):
                 break
             self._advance()
 
         return items
+
+    def _is_aggregate_call(self) -> bool:
+        """True when the next tokens are COUNT/SUM/AVG/MIN/MAX(."""
+        if not self._match(TokenType.IDENTIFIER):
+            return False
+        if self._current().value.upper() not in ('COUNT', 'SUM', 'AVG', 'MIN', 'MAX'):
+            return False
+        return self._peek().type == TokenType.LPAREN
+
+    def _parse_order_direction(self) -> str:
+        if self._match(TokenType.ASC):
+            self._advance()
+            return 'ASC'
+        if self._match(TokenType.DESC):
+            self._advance()
+            return 'DESC'
+        return 'ASC'
+
+    def _parse_order_by_aggregate(self) -> OrderByItem:
+        """ORDER BY SUM(orders.total) uses the same result key as SELECT."""
+        func_name = self._advance().value.upper()
+        self._expect(TokenType.LPAREN)
+        if self._match(TokenType.STAR):
+            self._advance()
+            argument = '*'
+        else:
+            argument = self._expect(TokenType.IDENTIFIER).value
+            if self._match(TokenType.DOT):
+                self._advance()
+                argument = f'{argument}.{self._expect(TokenType.IDENTIFIER).value}'
+        self._expect(TokenType.RPAREN)
+        return OrderByItem(column=f'{func_name}({argument})', direction=self._parse_order_direction())
+
+    def _parse_order_by_column(self) -> OrderByItem:
+        column = self._expect(TokenType.IDENTIFIER).value
+        table_alias = None
+
+        if self._match(TokenType.DOT):
+            self._advance()
+            table_alias = column
+            column = self._expect(TokenType.IDENTIFIER).value
+
+        return OrderByItem(column=column, direction=self._parse_order_direction(), table_alias=table_alias)
 
     def _parse_insert(self) -> InsertQuery:
         """Parse an INSERT query."""

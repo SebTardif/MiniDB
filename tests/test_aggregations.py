@@ -311,3 +311,26 @@ class TestAggregations:
         assert len(results) == 1
         assert results[0]['name'] == 'Alice'
         assert results[0]['COUNT(*)'] == 2
+
+    def test_order_by_sum_of_joined_column(self):
+        """ORDER BY SUM(orders.total) sorts the grouped totals."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, total FLOAT)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        db.execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+        db.execute('INSERT INTO orders (id, user_id, total) VALUES (1, 1, 10.0)')
+        db.execute('INSERT INTO orders (id, user_id, total) VALUES (2, 2, 30.0)')
+        db.execute('INSERT INTO orders (id, user_id, total) VALUES (3, 1, 5.0)')
+
+        rows = db.query("""
+            SELECT users.name, SUM(orders.total)
+            FROM users
+            JOIN orders ON users.id = orders.user_id
+            GROUP BY users.name
+            ORDER BY SUM(orders.total) DESC
+        """)
+
+        assert [row['name'] for row in rows] == ['Bob', 'Alice']
+        assert rows[0]['SUM(orders.total)'] == 30.0
+        assert rows[1]['SUM(orders.total)'] == 15.0
