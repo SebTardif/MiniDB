@@ -191,8 +191,11 @@ class MiniDB:
             List of row dictionaries
 
         Raises:
-            MiniDBError: If the statement is not SELECT or execution fails
+            MiniDBError: If the statement is not SELECT, before it runs, or if execution fails
         """
+        parsed = parse_sql(sql)
+        if not isinstance(parsed, SelectQuery):
+            raise MiniDBError('query() only runs SELECT; use execute() for INSERT, UPDATE, DELETE, CREATE, or DROP')
         result = self.execute(sql, params)
         if isinstance(result, list):
             return result

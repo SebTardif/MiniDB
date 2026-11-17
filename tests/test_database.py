@@ -216,13 +216,21 @@ class TestDatabaseLifecycle:
         assert 'temp' not in db
 
     def test_query_on_non_select(self):
-        """Test that query() raises MiniDBError for non-SELECT statements."""
+        """query() raises before INSERT, DELETE, or BEGIN can change the database."""
         from minidb_sql.errors import MiniDBError
 
         db = MiniDB()
         db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY, v STRING)')
+        db.execute("INSERT INTO t (id, v) VALUES (1, 'labs')")
         with pytest.raises(MiniDBError, match=r'query\(\) only runs SELECT'):
-            db.query("INSERT INTO t (id, v) VALUES (1, 'x')")
+            db.query("INSERT INTO t (id, v) VALUES (2, 'x')")
+        with pytest.raises(MiniDBError, match=r'query\(\) only runs SELECT'):
+            db.query("DELETE FROM t WHERE v = 'labs'")
+        with pytest.raises(MiniDBError, match=r'query\(\) only runs SELECT'):
+            db.query('BEGIN')
+        assert db.query('SELECT id, v FROM t') == [{'id': 1, 'v': 'labs'}]
+        db.execute('BEGIN')
+        db.execute('ROLLBACK')
 
     def test_query_insert_mentions_execute(self):
         """INSERT via query() tells the caller to use execute()."""
