@@ -58,6 +58,17 @@ def _assign_output(
         written[out_name] = None
 
 
+def _same_stored_value(left: Any, right: Any) -> bool:
+    """True when a qualified cell repeats the bare column.
+
+    Python treats True as 1 and False as 0 or 0.0. A boolean and a number
+    are different cells, matching WHERE and JOIN.
+    """
+    if isinstance(left, bool) != isinstance(right, bool):
+        return False
+    return left == right
+
+
 class QueryExecutor:
     """Executes parsed SQL queries against the database."""
 
@@ -149,7 +160,13 @@ class QueryExecutor:
                     self._reject_distinct_order_by(query)
                 indexed_rows = self._sort_indexed_rows(indexed_rows, query, known_tables)
                 ordered_source = True
-            result_rows = self._project_columns(indexed_rows, query.columns, query.table, known_tables)
+            result_rows = self._project_columns(
+                indexed_rows,
+                query.columns,
+                query.table,
+                known_tables,
+                self._alias_scopes(query),
+            )
 
         if query.having:
             if not query.group_by and not self._has_aggregates(query.columns):
@@ -988,12 +1005,19 @@ class QueryExecutor:
 
         return None
 
+    def _alias_scopes(self, query: SelectQuery) -> set[str]:
+        """Qualifiers the caller wrote as aliases, not physical table names."""
+        names = {query.alias} if query.alias else set()
+        names.update(join.alias for join in query.joins if join.alias)
+        return names
+
     def _project_columns(
         self,
         rows: list[tuple[int, Row]],
         columns: list[SelectColumn],
         table_name: str | None = None,
         known_tables: set[str] | None = None,
+        alias_scopes: set[str] | None = None,
     ) -> list[Row]:
         """Project selected columns from rows."""
         results = []
@@ -1024,10 +1048,11 @@ class QueryExecutor:
                         if '.' not in key:
                             continue
                         qualifier, bare = key.split('.', 1)
-                        # Another table's prefix must stay even when the value
-                        # equals the bare column. A lone prefix repeats that bare value.
-                        shared = any(other != key and other.endswith('.' + bare) for other in row)
-                        if bare in result and (result[bare] != val or shared):
+                        # A physical prefix that only repeats the bare column stays hidden.
+                        # An alias is a second name, so it stays even when the value matches.
+                        keep_equal = alias_scopes is not None and qualifier in alias_scopes
+                        repeats = _same_stored_value(result[bare], val) if bare in result else False
+                        if bare in result and (not repeats or keep_equal):
                             _assign_output(result, written, bare, val, qualifier)
                 elif col.aggregate:
                     # Aggregates handled separately
