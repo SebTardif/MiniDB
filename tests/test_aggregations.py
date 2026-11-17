@@ -2,7 +2,15 @@
 
 import pytest
 
-from minidb_sql import Column, ColumnNotFoundError, ColumnType, InvalidQueryError, MiniDB, TypeMismatchError
+from minidb_sql import (
+    Column,
+    ColumnNotFoundError,
+    ColumnType,
+    InvalidQueryError,
+    MiniDB,
+    SyntaxError_,
+    TypeMismatchError,
+)
 
 
 class TestAggregations:
@@ -357,3 +365,18 @@ class TestAggregations:
         """)
 
         assert rows == [{'name': 'Ada', 'n': 2}, {'name': 'Bea', 'n': 0}]
+
+    def test_count_distinct_ignores_repeat_names_and_null(self):
+        """COUNT(DISTINCT name) counts each non-NULL name once."""
+        db = MiniDB()
+        db.execute('CREATE TABLE kids (id INTEGER PRIMARY KEY, name STRING, room INTEGER)')
+        db.execute("INSERT INTO kids (id, name, room) VALUES (1, 'Noa', 1)")
+        db.execute("INSERT INTO kids (id, name, room) VALUES (2, 'Noa', 2)")
+        db.execute("INSERT INTO kids (id, name, room) VALUES (3, 'Max', 1)")
+        db.execute('INSERT INTO kids (id, name, room) VALUES (4, NULL, 1)')
+
+        assert db.query('SELECT COUNT(DISTINCT name) FROM kids') == [{'COUNT(DISTINCT name)': 2}]
+        rows = db.query('SELECT room, COUNT(DISTINCT name) AS names FROM kids GROUP BY room ORDER BY room')
+        assert rows == [{'room': 1, 'names': 2}, {'room': 2, 'names': 1}]
+        with pytest.raises(SyntaxError_):
+            db.query('SELECT COUNT(DISTINCT *) FROM kids')
