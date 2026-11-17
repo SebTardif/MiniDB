@@ -162,6 +162,7 @@ CREATE TABLE table_name (
 
 ```sql
 INSERT INTO table_name (col1, col2, col3) VALUES (1, 'value', 3.14)
+INSERT INTO table_name VALUES (1, 'value', 3.14)
 INSERT INTO table_name (col1, col2, col3) VALUES (?, ?, ?)
 ```
 
@@ -234,6 +235,7 @@ ORDER BY col1 ASC, col2 DESC
 
 ```sql
 LIMIT 10
+LIMIT ?
 ```
 
 ### JOIN

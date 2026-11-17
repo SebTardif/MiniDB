@@ -134,7 +134,7 @@ class SelectQuery:
     order_by: list[OrderByItem] = field(default_factory=list)
     group_by: list[str] = field(default_factory=list)
     having: WhereClause | None = None
-    limit: int | None = None
+    limit: int | ParamPlaceholder | None = None
     joins: list[JoinClause] = field(default_factory=list)
     distinct: bool = False
 
@@ -474,6 +474,11 @@ class Parser:
     ):
         """Parse the token stream into a query object."""
         token = self._current()
+        if token.type == TokenType.SEMICOLON:
+            self._advance()
+            token = self._current()
+        if token.type == TokenType.EOF:
+            raise SyntaxError_('Empty statement', token.position)
 
         if token.type == TokenType.SELECT:
             return self._parse_select()
@@ -582,8 +587,12 @@ class Parser:
         limit = None
         if self._match(TokenType.LIMIT):
             self._advance()
-            limit_token = self._expect(TokenType.INTEGER_LITERAL)
-            limit = limit_token.value
+            if self._match(TokenType.PLACEHOLDER):
+                self._advance()
+                limit = ParamPlaceholder()
+            else:
+                limit_token = self._expect(TokenType.INTEGER_LITERAL)
+                limit = limit_token.value
 
         self._expect_end()
 
@@ -1013,17 +1022,17 @@ class Parser:
 
         table = self._expect(TokenType.IDENTIFIER).value
 
-        # Parse columns
-        self._expect(TokenType.LPAREN)
+        # Columns are optional. INSERT INTO t VALUES (...) uses table order.
         columns = []
-        while True:
-            columns.append(self._expect(TokenType.IDENTIFIER).value)
-            if not self._match(TokenType.COMMA):
-                break
+        if self._match(TokenType.LPAREN):
             self._advance()
-        self._expect(TokenType.RPAREN)
+            while True:
+                columns.append(self._expect(TokenType.IDENTIFIER).value)
+                if not self._match(TokenType.COMMA):
+                    break
+                self._advance()
+            self._expect(TokenType.RPAREN)
 
-        # Parse VALUES
         self._expect(TokenType.VALUES)
         self._expect(TokenType.LPAREN)
         values = []
@@ -1253,6 +1262,8 @@ def _count_query_placeholders(
         for col in query.columns:
             if col.case is not None:
                 total += _count_case_placeholders(col.case)
+        if isinstance(query.limit, ParamPlaceholder):
+            total += 1
         return total
     return 0
 
@@ -1332,3 +1343,8 @@ def bind_params(
                 _bind_case(col.case, values, index)
         _bind_where(query.where, values, index)
         _bind_where(query.having, values, index)
+        if isinstance(query.limit, ParamPlaceholder):
+            bound = _bind_value(query.limit, values, index)
+            if isinstance(bound, bool) or not isinstance(bound, int):
+                raise InvalidQueryError('LIMIT must be an integer')
+            query.limit = bound

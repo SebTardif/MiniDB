@@ -32,6 +32,15 @@ class TestCRUD:
         )
         return db
 
+    def test_insert_values_without_a_column_list(self, db):
+        """INSERT INTO t VALUES (...) follows the table's column order."""
+        row_id = db.execute("INSERT INTO users VALUES (1, 'Cy', 40, 10.0, false)")
+        assert row_id == 0
+        row = db.query('SELECT id, name, age, active FROM users')[0]
+        assert row == {'id': 1, 'name': 'Cy', 'age': 40, 'active': False}
+        with pytest.raises(InvalidQueryError, match=r'column count \(5\) does not match value count \(1\)'):
+            db.execute('INSERT INTO users VALUES (2)')
+
     def test_insert_single_row(self, db):
         """Test inserting a single row."""
         row_id = db.execute("INSERT INTO users (id, name, age, salary, active) VALUES (1, 'Alice', 30, 50000.0, true)")

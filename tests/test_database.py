@@ -11,6 +11,7 @@ from minidb_sql import (
     MiniDB,
     QueryExecutor,
     Schema,
+    SyntaxError_,
     TableExistsError,
     TableNotFoundError,
     TypeMismatchError,
@@ -406,6 +407,24 @@ class TestParameters:
         assert results[0]['name'] == payload
         assert 'users' in db
         assert db.get_table('users').row_count == 1
+
+    def test_limit_placeholder(self, db):
+        """LIMIT ? is a bound non-negative integer."""
+        db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Ada', 30)")
+        db.execute("INSERT INTO users (id, name, age) VALUES (2, 'Bea', 25)")
+        rows = db.query('SELECT name FROM users ORDER BY id LIMIT ?', [1])
+        assert [row['name'] for row in rows] == ['Ada']
+        with pytest.raises(InvalidQueryError, match=r'LIMIT must be an integer'):
+            db.query('SELECT name FROM users LIMIT ?', ['x'])
+        with pytest.raises(InvalidQueryError, match=r'LIMIT must be zero or positive'):
+            db.query('SELECT name FROM users LIMIT ?', [-1])
+
+    def test_empty_statement(self):
+        """Blank, whitespace, and comment-only input name the empty statement."""
+        db = MiniDB()
+        for sql in ('', '   ', '-- just a comment', ';'):
+            with pytest.raises(SyntaxError_, match=r'Empty statement'):
+                db.execute(sql)
 
 
 class TestTransactions:
