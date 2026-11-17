@@ -138,10 +138,13 @@ class QueryExecutor:
             result_rows = [{key: value for key, value in row.items() if key in keep} for row in result_rows]
 
         # Apply LIMIT. A negative slice would drop rows from the end.
-        if query.limit is not None:
-            if query.limit < 0:
+        limit = query.limit
+        if limit is not None:
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise InvalidQueryError('LIMIT must be an integer')
+            if limit < 0:
                 raise InvalidQueryError('LIMIT must be zero or positive')
-            result_rows = result_rows[: query.limit]
+            result_rows = result_rows[:limit]
 
         return result_rows
 
@@ -1111,23 +1114,22 @@ class QueryExecutor:
             raise TableNotFoundError(query.table)
 
         table = self.tables[query.table]
+        columns = query.columns or table.schema.column_names
 
-        if len(query.columns) != len(query.values):
-            raise InvalidQueryError(
-                f'column count ({len(query.columns)}) does not match value count ({len(query.values)})'
-            )
+        if len(columns) != len(query.values):
+            raise InvalidQueryError(f'column count ({len(columns)}) does not match value count ({len(query.values)})')
 
-        for col in query.columns:
+        for col in columns:
             if not table.schema.has_column(col):
                 raise ColumnNotFoundError(col, query.table)
 
         seen_columns: set[str] = set()
-        for col in query.columns:
+        for col in columns:
             if col in seen_columns:
                 raise InvalidQueryError(f"Duplicate column name '{col}'")
             seen_columns.add(col)
 
-        row = dict(zip(query.columns, query.values, strict=True))
+        row = dict(zip(columns, query.values, strict=True))
 
         row_id = table.insert(row)
         return row_id
