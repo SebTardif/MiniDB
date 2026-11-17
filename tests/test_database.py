@@ -13,6 +13,7 @@ from minidb_sql import (
     Schema,
     TableExistsError,
     TableNotFoundError,
+    TypeMismatchError,
 )
 from minidb_sql.parser import parse_sql
 
@@ -66,6 +67,28 @@ class TestDatabaseLifecycle:
         assert 'products' in db
         table = db.get_table('products')
         assert table.primary_key == 'id'
+
+    def test_sql_default_fills_an_omitted_column(self):
+        """CREATE TABLE DEFAULT is used when INSERT leaves the column out."""
+        db = MiniDB()
+        db.execute("""
+            CREATE TABLE people (
+                id INTEGER PRIMARY KEY,
+                name STRING NOT NULL,
+                city STRING DEFAULT 'Boston',
+                active BOOLEAN DEFAULT true
+            )
+        """)
+        db.execute("INSERT INTO people (id, name) VALUES (1, 'Ada')")
+        db.execute("INSERT INTO people (id, name, city, active) VALUES (2, 'Bea', NULL, false)")
+        rows = db.query('SELECT id, city, active FROM people ORDER BY id')
+        assert rows == [
+            {'id': 1, 'city': 'Boston', 'active': True},
+            {'id': 2, 'city': None, 'active': False},
+        ]
+
+        with pytest.raises(TypeMismatchError):
+            db.execute("CREATE TABLE bad (id INTEGER PRIMARY KEY, age INTEGER DEFAULT 'nope')")
 
     def test_sql_rejects_null_primary_key(self):
         """PRIMARY KEY NULL is a contradiction, so CREATE does not build the table."""

@@ -172,6 +172,8 @@ class ColumnDef:
     type: ColumnType
     primary_key: bool = False
     nullable: bool = True
+    default: Any = None
+    has_default: bool = False
 
 
 @dataclass
@@ -251,6 +253,7 @@ class Lexer:
         'BEGIN': TokenType.BEGIN,
         'COMMIT': TokenType.COMMIT,
         'ROLLBACK': TokenType.ROLLBACK,
+        'DEFAULT': TokenType.DEFAULT,
     }
 
     def __init__(self, sql: str):
@@ -1114,26 +1117,43 @@ class Parser:
 
         primary_key = False
         nullable = True
+        default = None
+        has_default = False
 
-        # Check for PRIMARY KEY
-        if self._match(TokenType.PRIMARY):
-            self._advance()
-            self._expect(TokenType.KEY)
-            primary_key = True
-            nullable = False
+        while True:
+            if self._match(TokenType.PRIMARY):
+                self._advance()
+                self._expect(TokenType.KEY)
+                primary_key = True
+                nullable = False
+            elif self._match(TokenType.NOT):
+                self._advance()
+                self._expect(TokenType.NULL)
+                nullable = False
+            elif self._match(TokenType.NULL):
+                self._advance()
+                if primary_key:
+                    raise InvalidQueryError(f"PRIMARY KEY column '{name}' cannot be NULL")
+                nullable = True
+            elif self._match(TokenType.DEFAULT):
+                if has_default:
+                    raise InvalidQueryError(f"Column '{name}' has two DEFAULT clauses")
+                self._advance()
+                default = self._parse_value()
+                if isinstance(default, ParamPlaceholder):
+                    raise InvalidQueryError(f"Column '{name}' DEFAULT cannot be a parameter")
+                has_default = True
+            else:
+                break
 
-        # Check for NULL/NOT NULL
-        if self._match(TokenType.NOT):
-            self._advance()
-            self._expect(TokenType.NULL)
-            nullable = False
-        elif self._match(TokenType.NULL):
-            self._advance()
-            if primary_key:
-                raise InvalidQueryError(f"PRIMARY KEY column '{name}' cannot be NULL")
-            nullable = True
-
-        return ColumnDef(name=name, type=col_type, primary_key=primary_key, nullable=nullable)
+        return ColumnDef(
+            name=name,
+            type=col_type,
+            primary_key=primary_key,
+            nullable=nullable,
+            default=default,
+            has_default=has_default,
+        )
 
     def _parse_drop(self) -> DropTableQuery:
         """Parse a DROP TABLE query."""
