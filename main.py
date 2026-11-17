@@ -22,6 +22,13 @@ def print_section(title: str):
     print('=' * 60)
 
 
+def _cell(value: object) -> str:
+    """Format a float without binary dust such as 139.92000000000002."""
+    if isinstance(value, float) and value == value and value not in (float('inf'), float('-inf')):
+        return format(value, '.12g')
+    return str(value)
+
+
 def print_results(results, title: str | None = None):
     """Print query results in a formatted way."""
     if title:
@@ -30,21 +37,19 @@ def print_results(results, title: str | None = None):
         print('  (no results)')
         return
 
-    # Get column widths
     columns = list(results[0].keys())
     widths = {col: len(col) for col in columns}
-    for row in results:
+    rendered = [{col: _cell(row.get(col, '')) for col in columns} for row in results]
+    for row in rendered:
         for col in columns:
-            widths[col] = max(widths[col], len(str(row.get(col, ''))))
+            widths[col] = max(widths[col], len(row[col]))
 
-    # Print header
     header = ' | '.join(col.ljust(widths[col]) for col in columns)
     print(f'  {header}')
     print(f'  {"-" * len(header)}')
 
-    # Print rows
-    for row in results:
-        values = ' | '.join(str(row.get(col, '')).ljust(widths[col]) for col in columns)
+    for row in rendered:
+        values = ' | '.join(row[col].ljust(widths[col]) for col in columns)
         print(f'  {values}')
 
 
