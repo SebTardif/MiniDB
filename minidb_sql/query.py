@@ -63,6 +63,31 @@ class QueryExecutor:
 
     def __init__(self, tables: dict[str, Table]):
         self.tables = tables
+        self._bound: dict[str, Table] | None = None
+
+    def _table_named(self, name: str) -> Table | None:
+        """Resolve a qualifier. During SELECT the name is an alias or a table name."""
+        if self._bound is not None:
+            return self._bound.get(name)
+        return self.tables.get(name)
+
+    def _bind_scopes(self, query: SelectQuery) -> dict[str, Table]:
+        """Map each FROM or JOIN qualifier to its physical table.
+
+        Two aliases of one table stay separate. The same qualifier twice is an error,
+        which is what a self-join without aliases would otherwise overwrite.
+        """
+        bound: dict[str, Table] = {}
+
+        def add(scope: str, physical: str) -> None:
+            if scope in bound:
+                raise InvalidQueryError(f"Duplicate table name '{scope}'")
+            bound[scope] = self.tables[physical]
+
+        add(query.alias or query.table, query.table)
+        for join in query.joins:
+            add(join.alias or join.table, join.table)
+        return bound
 
     def execute(self, query) -> QueryResult:
         """Execute a parsed query."""
@@ -85,15 +110,21 @@ class QueryExecutor:
 
     def execute_select(self, query: SelectQuery) -> list[Row]:
         """Execute a SELECT query."""
-        # Get the main table
         if query.table not in self.tables:
             raise TableNotFoundError(query.table)
-
-        main_table = self.tables[query.table]
-        known_tables = self._known_tables(query)
         for join in query.joins:
             if join.table not in self.tables:
                 raise TableNotFoundError(join.table)
+        self._bound = self._bind_scopes(query)
+        try:
+            return self._select_rows(query)
+        finally:
+            self._bound = None
+
+    def _select_rows(self, query: SelectQuery) -> list[Row]:
+        """Run one SELECT after qualifiers are bound."""
+        main_table = self.tables[query.table]
+        known_tables = self._known_tables(query)
         self._reject_unknown_query_columns(query, known_tables)
         self._reject_bool_literal_where(query.where, known_tables)
 
@@ -188,15 +219,16 @@ class QueryExecutor:
         Each new table joins to every table already in the FROM list.
         ON b.id still names b after a later table is joined.
         """
+        left_scope = query.alias or query.table
         left_rows = []
         for row_id, row in left_table.scan():
             merged = dict(row)
-            if query.table:
+            if left_scope:
                 for col, val in row.items():
-                    merged[f'{query.table}.{col}'] = val
+                    merged[f'{left_scope}.{col}'] = val
             left_rows.append((row_id, merged))
 
-        seen = [query.table]
+        seen = [left_scope]
         for join in query.joins:
             if join.join_type == 'RIGHT':
                 raise InvalidQueryError('RIGHT JOIN is not supported; swap the tables and use LEFT JOIN')
@@ -204,6 +236,7 @@ class QueryExecutor:
                 raise TableNotFoundError(join.table)
 
             right_table = self.tables[join.table]
+            right_scope = join.alias or join.table
             left_spec, right_column = self._resolve_join_pair(seen, join, right_table)
             right_index: dict[Any, list[tuple[int, Row]]] = defaultdict(list)
             for rid, row in right_table.scan():
@@ -223,16 +256,16 @@ class QueryExecutor:
                         for col, val in right_row.items():
                             if col not in merged:
                                 merged[col] = val
-                            merged[f'{join.table}.{col}'] = val
+                            merged[f'{right_scope}.{col}'] = val
                         new_rows.append((left_id, merged))
                 elif join.join_type == 'LEFT':
                     merged = dict(left_row)
                     for col in right_table.columns:
                         if col not in merged:
                             merged[col] = None
-                        merged[f'{join.table}.{col}'] = None
+                        merged[f'{right_scope}.{col}'] = None
                     new_rows.append((left_id, merged))
-            seen.append(join.table)
+            seen.append(right_scope)
             left_rows = new_rows
 
         if query.where:
@@ -248,15 +281,17 @@ class QueryExecutor:
     ) -> tuple[tuple[str, str], str]:
         """Return ((previous table, column), right-table column) for ON."""
 
+        right_scope = join.alias or join.table
+
         def classify(qualifier: str | None, column: str) -> tuple[str, str, str]:
             if qualifier is None:
                 return ('bare', '', column)
-            if qualifier == join.table:
+            if qualifier == right_scope:
                 if not right_table.schema.has_column(column):
-                    raise ColumnNotFoundError(column, join.table)
+                    raise ColumnNotFoundError(column, right_scope)
                 return ('right', qualifier, column)
             if qualifier in seen:
-                table = self.tables.get(qualifier)
+                table = self._table_named(qualifier)
                 if table is None or not table.schema.has_column(column):
                     raise ColumnNotFoundError(column, qualifier)
                 return ('left', qualifier, column)
@@ -264,13 +299,17 @@ class QueryExecutor:
 
         def resolve_bare(column: str) -> tuple[str, str, str]:
             on_right = right_table.schema.has_column(column)
-            owners = [name for name in seen if name in self.tables and self.tables[name].schema.has_column(column)]
+            owners = [
+                name
+                for name in seen
+                if (table := self._table_named(name)) is not None and table.schema.has_column(column)
+            ]
             if on_right and owners:
                 raise InvalidQueryError(f"Column '{column}' is ambiguous")
             if len(owners) > 1:
                 raise InvalidQueryError(f"Column '{column}' is ambiguous")
             if on_right:
-                return ('right', join.table, column)
+                return ('right', right_scope, column)
             if len(owners) == 1:
                 return ('left', owners[0], column)
             raise ColumnNotFoundError(column, join.table)
@@ -280,7 +319,9 @@ class QueryExecutor:
         # when the new table also has id.
         if join.left_table is None and join.right_table is None:
             owners = [
-                name for name in seen if name in self.tables and self.tables[name].schema.has_column(join.left_column)
+                name
+                for name in seen
+                if (found := self._table_named(name)) is not None and found.schema.has_column(join.left_column)
             ]
             if len(owners) != 1:
                 raise InvalidQueryError(f"Column '{join.left_column}' is ambiguous")
@@ -313,10 +354,12 @@ class QueryExecutor:
         return row.get(column)
 
     def _known_tables(self, query: SelectQuery) -> set[str]:
-        """Table names this SELECT can qualify."""
-        names = {query.table}
+        """Qualifiers this SELECT can use. An alias replaces the table name."""
+        if self._bound is not None:
+            return set(self._bound)
+        names = {query.alias or query.table}
         for join in query.joins:
-            names.add(join.table)
+            names.add(join.alias or join.table)
         return names
 
     def _find_index_condition(self, where: WhereClause, column: str, operators: tuple[str, ...]) -> Condition | None:
@@ -345,11 +388,13 @@ class QueryExecutor:
         if table_alias:
             if table_alias not in known_tables:
                 raise ColumnNotFoundError(column, table_alias)
-            table = self.tables.get(table_alias)
+            table = self._table_named(table_alias)
             if table is None or not table.schema.has_column(column):
                 raise ColumnNotFoundError(column, table_alias)
             return
-        if not any(self.tables[name].schema.has_column(column) for name in known_tables if name in self.tables):
+        if not any(
+            (table := self._table_named(name)) is not None and table.schema.has_column(column) for name in known_tables
+        ):
             raise ColumnNotFoundError(column, fallback_table)
 
     def _reject_unknown_where(self, where: WhereClause | None, known_tables: set[str], fallback_table: str) -> None:
@@ -392,10 +437,9 @@ class QueryExecutor:
         the bare value.
         """
         if table_alias:
+            table = self._table_named(table_alias)
             if known_tables is not None and (
-                table_alias not in known_tables
-                or table_alias not in self.tables
-                or not self.tables[table_alias].schema.has_column(column)
+                table_alias not in known_tables or table is None or not table.schema.has_column(column)
             ):
                 raise ColumnNotFoundError(column, table_alias)
             prefixed = f'{table_alias}.{column}'
@@ -508,14 +552,14 @@ class QueryExecutor:
     def _samples_for_column(self, column: str, table_alias: str | None, known_tables: set[str]) -> list[Any]:
         tables: list[Table] = []
         if table_alias is not None:
-            found = self.tables.get(table_alias)
+            found = self._table_named(table_alias)
             if found is not None:
                 tables.append(found)
         else:
             tables.extend(
-                self.tables[name]
+                table
                 for name in known_tables
-                if name in self.tables and self.tables[name].schema.has_column(column)
+                if (table := self._table_named(name)) is not None and table.schema.has_column(column)
             )
         samples: list[Any] = []
         for table in tables:
@@ -643,7 +687,9 @@ class QueryExecutor:
         return False
 
     def _column_owner_count(self, column: str, known: set[str]) -> int:
-        return sum(1 for name in known if name in self.tables and self.tables[name].schema.has_column(column))
+        return sum(
+            1 for name in known if (table := self._table_named(name)) is not None and table.schema.has_column(column)
+        )
 
     def _require_group_column(self, spec: str, known: set[str], query: SelectQuery) -> None:
         if '.' in spec:
@@ -659,7 +705,9 @@ class QueryExecutor:
         if '.' in spec:
             table, column = spec.split('.', 1)
             return self._read_qualified_column(row, column, table, known)
-        owners = [name for name in known if name in self.tables and self.tables[name].schema.has_column(spec)]
+        owners = [
+            name for name in known if (found := self._table_named(name)) is not None and found.schema.has_column(spec)
+        ]
         if len(owners) == 1:
             prefixed = f'{owners[0]}.{spec}'
             if prefixed in row:
@@ -960,7 +1008,7 @@ class QueryExecutor:
             for col in columns:
                 if col.name == '*':
                     if col.table_alias:
-                        source = self.tables.get(col.table_alias)
+                        source = self._table_named(col.table_alias)
                         if source is None:
                             raise ColumnNotFoundError('*', col.table_alias)
                         for schema_col in source.columns:
@@ -976,8 +1024,10 @@ class QueryExecutor:
                         if '.' not in key:
                             continue
                         qualifier, bare = key.split('.', 1)
-                        same_source = written.get(bare) in (None, qualifier)
-                        if bare in result and (not same_source or result[bare] != val):
+                        # Another table's prefix must stay even when the value
+                        # equals the bare column. A lone prefix repeats that bare value.
+                        shared = any(other != key and other.endswith('.' + bare) for other in row)
+                        if bare in result and (result[bare] != val or shared):
                             _assign_output(result, written, bare, val, qualifier)
                 elif col.aggregate:
                     # Aggregates handled separately
