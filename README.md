@@ -153,7 +153,8 @@ CREATE TABLE table_name (
     column1 INTEGER PRIMARY KEY,
     column2 STRING NOT NULL,
     column3 FLOAT,
-    column4 BOOLEAN
+    column4 BOOLEAN,
+    column5 STRING DEFAULT 'Boston'
 )
 ```
 

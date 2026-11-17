@@ -160,7 +160,13 @@ class MiniDB:
 
         if isinstance(query, CreateTableQuery):
             columns = [
-                Column(name=col.name, type=col.type, primary_key=col.primary_key, nullable=col.nullable)
+                Column(
+                    name=col.name,
+                    type=col.type,
+                    primary_key=col.primary_key,
+                    nullable=col.nullable,
+                    **({'default': col.default} if col.has_default and col.default is not None else {}),
+                )
                 for col in query.columns
             ]
             self.create_table(query.table, columns)
