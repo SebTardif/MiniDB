@@ -334,3 +334,26 @@ class TestAggregations:
         assert [row['name'] for row in rows] == ['Bob', 'Alice']
         assert rows[0]['SUM(orders.total)'] == 30.0
         assert rows[1]['SUM(orders.total)'] == 15.0
+
+    def test_order_by_aliased_count_ignores_unmatched_join(self):
+        """ORDER BY the aggregate expression still works when SELECT aliases it.
+
+        A LEFT JOIN customer with no orders counts as 0, not 1.
+        """
+        db = MiniDB()
+        db.execute('CREATE TABLE customers (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER)')
+        db.execute("INSERT INTO customers (id, name) VALUES (1, 'Ada')")
+        db.execute("INSERT INTO customers (id, name) VALUES (2, 'Bea')")
+        db.execute('INSERT INTO orders (id, customer_id) VALUES (1, 1)')
+        db.execute('INSERT INTO orders (id, customer_id) VALUES (2, 1)')
+
+        rows = db.query("""
+            SELECT customers.name, COUNT(orders.id) AS n
+            FROM customers
+            LEFT JOIN orders ON customers.id = orders.customer_id
+            GROUP BY customers.name
+            ORDER BY COUNT(orders.id) DESC
+        """)
+
+        assert rows == [{'name': 'Ada', 'n': 2}, {'name': 'Bea', 'n': 0}]

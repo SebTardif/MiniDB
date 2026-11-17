@@ -663,14 +663,27 @@ class QueryExecutor:
                 return row[prefixed]
         return row.get(spec)
 
-    def _aggregate_label(self, col: SelectColumn) -> str:
-        if col.alias:
-            return col.alias
+    def _aggregate_expr(self, col: SelectColumn) -> str:
+        """Unaliased SUM(orders.total) key. ORDER BY can name this or the alias."""
         assert col.aggregate is not None
         argument = col.aggregate.column
         if col.table_alias:
             argument = f'{col.table_alias}.{argument}'
         return f'{col.aggregate.function}({argument})'
+
+    def _aggregate_label(self, col: SelectColumn) -> str:
+        if col.alias:
+            return col.alias
+        return self._aggregate_expr(col)
+
+    def _store_aggregate(self, result_row: dict[str, Any], col: SelectColumn, value: Any) -> None:
+        label = self._aggregate_label(col)
+        if col.alias and label in result_row:
+            raise InvalidQueryError(f"Duplicate column name '{col.alias}'")
+        result_row[label] = value
+        expr = self._aggregate_expr(col)
+        if expr not in result_row:
+            result_row[expr] = value
 
     def _aggregate_cell(self, row: Row, column: str, table_alias: str | None, known: set[str]) -> Any:
         if table_alias:
@@ -741,10 +754,7 @@ class QueryExecutor:
                         query,
                         sel_col.table_alias,
                     )
-                    agg_name = self._aggregate_label(sel_col)
-                    if sel_col.alias and agg_name in result_row:
-                        raise InvalidQueryError(f"Duplicate column name '{sel_col.alias}'")
-                    result_row[agg_name] = agg_value
+                    self._store_aggregate(result_row, sel_col, agg_value)
                 elif sel_col.case is not None:
                     self._reject_case_grouping(sel_col.case, query.group_by)
                     value = self._evaluate_case(sample, sel_col.case, known)
@@ -837,17 +847,14 @@ class QueryExecutor:
             raise InvalidQueryError('SELECT * cannot be combined with aggregates without GROUP BY')
 
         row_list = [row for _, row in rows]
-        result_row = {}
+        result_row: dict[str, Any] = {}
 
         for col in query.columns:
             if col.aggregate:
                 agg_value = self._compute_aggregate(
                     col.aggregate.function, col.aggregate.column, row_list, query, col.table_alias
                 )
-                agg_name = self._aggregate_label(col)
-                if col.alias and agg_name in result_row:
-                    raise InvalidQueryError(f"Duplicate column name '{col.alias}'")
-                result_row[agg_name] = agg_value
+                self._store_aggregate(result_row, col, agg_value)
 
         for spec in self._having_aggregate_names(query.having):
             if spec not in result_row:
