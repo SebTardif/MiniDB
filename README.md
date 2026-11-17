@@ -177,6 +177,7 @@ SELECT col1 AS alias FROM table_name
 SELECT DISTINCT col1 FROM table_name
 SELECT DISTINCT col1, col2 FROM table_name
 SELECT col1, COUNT(*), AVG(col2) FROM table_name GROUP BY col1
+SELECT COUNT(DISTINCT col1) FROM table_name
 SELECT col1, COUNT(*) FROM table_name GROUP BY col1 HAVING COUNT(*) > 1
 SELECT col1, COUNT(*) AS n FROM table_name GROUP BY col1 HAVING n > 1
 ```

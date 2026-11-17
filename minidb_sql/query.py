@@ -669,6 +669,8 @@ class QueryExecutor:
         argument = col.aggregate.column
         if col.table_alias:
             argument = f'{col.table_alias}.{argument}'
+        if col.aggregate.distinct:
+            argument = f'DISTINCT {argument}'
         return f'{col.aggregate.function}({argument})'
 
     def _aggregate_label(self, col: SelectColumn) -> str:
@@ -753,6 +755,7 @@ class QueryExecutor:
                         group_rows,
                         query,
                         sel_col.table_alias,
+                        sel_col.aggregate.distinct,
                     )
                     self._store_aggregate(result_row, sel_col, agg_value)
                 elif sel_col.case is not None:
@@ -782,8 +785,8 @@ class QueryExecutor:
 
             for spec in self._having_aggregate_names(query.having):
                 if spec not in result_row:
-                    func, column = self._split_aggregate_spec(spec)
-                    result_row[spec] = self._compute_aggregate(func, column, group_rows, query)
+                    func, column, distinct = self._split_aggregate_spec(spec)
+                    result_row[spec] = self._compute_aggregate(func, column, group_rows, query, distinct=distinct)
 
             results.append(result_row)
 
@@ -802,10 +805,14 @@ class QueryExecutor:
                 names.extend(self._having_aggregate_names(cond))
         return names
 
-    def _split_aggregate_spec(self, spec: str) -> tuple[str, str]:
-        """Split 'COUNT(*)' or 'SUM(quantity)' into (function, column)."""
+    def _split_aggregate_spec(self, spec: str) -> tuple[str, str, bool]:
+        """Split 'COUNT(*)' or 'COUNT(DISTINCT name)' into function, column, distinct."""
         func, rest = spec.split('(', 1)
-        return func, rest[:-1]
+        inner = rest[:-1]
+        distinct = inner.startswith('DISTINCT ')
+        if distinct:
+            inner = inner[len('DISTINCT ') :]
+        return func, inner, distinct
 
     def _selected_output_keys(self, query: SelectQuery) -> set[str]:
         """Keys that belong in the user-visible SELECT output."""
@@ -852,14 +859,19 @@ class QueryExecutor:
         for col in query.columns:
             if col.aggregate:
                 agg_value = self._compute_aggregate(
-                    col.aggregate.function, col.aggregate.column, row_list, query, col.table_alias
+                    col.aggregate.function,
+                    col.aggregate.column,
+                    row_list,
+                    query,
+                    col.table_alias,
+                    col.aggregate.distinct,
                 )
                 self._store_aggregate(result_row, col, agg_value)
 
         for spec in self._having_aggregate_names(query.having):
             if spec not in result_row:
-                func, column = self._split_aggregate_spec(spec)
-                result_row[spec] = self._compute_aggregate(func, column, row_list, query)
+                func, column, distinct = self._split_aggregate_spec(spec)
+                result_row[spec] = self._compute_aggregate(func, column, row_list, query, distinct=distinct)
 
         return [result_row] if result_row else []
 
@@ -870,6 +882,7 @@ class QueryExecutor:
         rows: list[Row],
         query: SelectQuery,
         table_alias: str | None = None,
+        distinct: bool = False,
     ) -> Any:
         """Compute an aggregate function value."""
         known = self._known_tables(query)
@@ -886,12 +899,21 @@ class QueryExecutor:
         def cell(row: Row) -> Any:
             return self._aggregate_cell(row, column, table_alias, known)
 
-        if func == 'COUNT':
-            if column == '*':
-                return len(rows)
-            return sum(1 for row in rows if cell(row) is not None)
+        if func == 'COUNT' and column == '*' and not distinct:
+            return len(rows)
 
-        values: list[Any] = [v for row in rows if (v := cell(row)) is not None]
+        values: list[Any] = []
+        if distinct:
+            for row in rows:
+                value = cell(row)
+                if value is None or value in values:
+                    continue
+                values.append(value)
+        else:
+            values = [v for row in rows if (v := cell(row)) is not None]
+
+        if func == 'COUNT':
+            return len(values)
 
         if not values:
             return None

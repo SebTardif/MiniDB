@@ -110,6 +110,7 @@ class AggregateFunction:
     function: str  # 'COUNT', 'SUM', 'AVG', 'MIN', 'MAX'
     column: str  # Column name or '*' for COUNT(*)
     alias: str | None = None
+    distinct: bool = False
 
 
 @dataclass
@@ -442,6 +443,14 @@ class Lexer:
             self.tokens.append(Token(TokenType.IDENTIFIER, identifier, start))
 
 
+def _aggregate_call_label(func: str, column: str, table_alias: str | None, distinct: bool) -> str:
+    """Result key for COUNT(name) or COUNT(DISTINCT kids.name)."""
+    shown = f'{table_alias}.{column}' if table_alias else column
+    if distinct:
+        shown = f'DISTINCT {shown}'
+    return f'{func}({shown})'
+
+
 class Parser:
     """Parses tokenized SQL queries."""
 
@@ -641,23 +650,31 @@ class Parser:
 
         return SelectColumn(name=col_name, table_alias=table_alias, alias=alias)
 
+    def _parse_aggregate_argument(self) -> tuple[str, str | None, bool]:
+        """Parse the inside of an aggregate call. The opening parenthesis is already consumed."""
+        distinct = False
+        if self._match(TokenType.DISTINCT):
+            self._advance()
+            distinct = True
+        table_alias = None
+        if self._match(TokenType.STAR):
+            if distinct:
+                token = self._current()
+                raise SyntaxError_('DISTINCT cannot be used with *', token.position)
+            self._advance()
+            return '*', None, False
+        col_name = self._expect(TokenType.IDENTIFIER).value
+        if self._match(TokenType.DOT):
+            self._advance()
+            table_alias = col_name
+            col_name = self._expect(TokenType.IDENTIFIER).value
+        return col_name, table_alias, distinct
+
     def _parse_aggregate_column(self) -> SelectColumn:
         """Parse an aggregate function column."""
         func_name = self._advance().value.upper()
         self._expect(TokenType.LPAREN)
-
-        table_alias = None
-        if self._match(TokenType.STAR):
-            self._advance()
-            col_name = '*'
-        else:
-            col_name = self._expect(TokenType.IDENTIFIER).value
-            # Check for table.column syntax
-            if self._match(TokenType.DOT):
-                self._advance()
-                table_alias = col_name
-                col_name = self._expect(TokenType.IDENTIFIER).value
-
+        col_name, table_alias, distinct = self._parse_aggregate_argument()
         self._expect(TokenType.RPAREN)
 
         alias = None
@@ -670,7 +687,7 @@ class Parser:
         return SelectColumn(
             name=col_name,
             table_alias=table_alias,
-            aggregate=AggregateFunction(function=func_name, column=col_name, alias=alias),
+            aggregate=AggregateFunction(function=func_name, column=col_name, alias=alias, distinct=distinct),
             alias=alias,
         )
 
@@ -827,18 +844,9 @@ class Parser:
         if column.upper() in ('COUNT', 'SUM', 'AVG', 'MIN', 'MAX') and self._match(TokenType.LPAREN):
             func = column.upper()
             self._advance()
-            if self._match(TokenType.STAR):
-                self._advance()
-                agg_col = '*'
-            else:
-                agg_col = self._expect(TokenType.IDENTIFIER).value
-                if self._match(TokenType.DOT):
-                    self._advance()
-                    table_alias = agg_col
-                    agg_col = self._expect(TokenType.IDENTIFIER).value
+            agg_col, table_alias, distinct = self._parse_aggregate_argument()
             self._expect(TokenType.RPAREN)
-            shown = f'{table_alias}.{agg_col}' if table_alias else agg_col
-            column = f'{func}({shown})'
+            column = _aggregate_call_label(func, agg_col, table_alias, distinct)
         elif self._match(TokenType.DOT):
             self._advance()
             table_alias = column
@@ -982,16 +990,10 @@ class Parser:
         """ORDER BY SUM(orders.total) uses the same result key as SELECT."""
         func_name = self._advance().value.upper()
         self._expect(TokenType.LPAREN)
-        if self._match(TokenType.STAR):
-            self._advance()
-            argument = '*'
-        else:
-            argument = self._expect(TokenType.IDENTIFIER).value
-            if self._match(TokenType.DOT):
-                self._advance()
-                argument = f'{argument}.{self._expect(TokenType.IDENTIFIER).value}'
+        argument, table_alias, distinct = self._parse_aggregate_argument()
         self._expect(TokenType.RPAREN)
-        return OrderByItem(column=f'{func_name}({argument})', direction=self._parse_order_direction())
+        label = _aggregate_call_label(func_name, argument, table_alias, distinct)
+        return OrderByItem(column=label, direction=self._parse_order_direction())
 
     def _parse_order_by_column(self) -> OrderByItem:
         column = self._expect(TokenType.IDENTIFIER).value
