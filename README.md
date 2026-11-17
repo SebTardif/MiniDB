@@ -249,6 +249,11 @@ JOIN t2 ON t1.id = t2.t1_id
 SELECT t1.col, t2.col
 FROM t1
 LEFT JOIN t2 ON t1.id = t2.t1_id
+
+-- Self-join. The alias is the qualifier, so both sides can be the same table.
+SELECT a.name, b.name
+FROM kids a
+JOIN kids b ON a.parent_id = b.id
 ```
 
 ### UPDATE

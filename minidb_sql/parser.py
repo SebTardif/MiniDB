@@ -67,6 +67,7 @@ class JoinClause:
     join_type: str = 'INNER'  # 'INNER', 'LEFT', 'RIGHT'
     left_table: str | None = None
     right_table: str | None = None
+    alias: str | None = None
 
 
 @dataclass
@@ -130,6 +131,7 @@ class SelectQuery:
 
     columns: list[SelectColumn]
     table: str
+    alias: str | None = None
     where: WhereClause | None = None
     order_by: list[OrderByItem] = field(default_factory=list)
     group_by: list[str] = field(default_factory=list)
@@ -551,6 +553,7 @@ class Parser:
         self._expect(TokenType.FROM)
         table_token = self._expect(TokenType.IDENTIFIER)
         table = table_token.value
+        alias = self._parse_table_alias()
 
         # JOIN clauses
         joins = []
@@ -606,6 +609,7 @@ class Parser:
             limit=limit,
             joins=joins,
             distinct=distinct,
+            alias=alias,
         )
 
     def _parse_select_columns(self) -> list[SelectColumn]:
@@ -766,6 +770,7 @@ class Parser:
 
         self._expect(TokenType.JOIN)
         right_table = self._expect(TokenType.IDENTIFIER).value
+        alias = self._parse_table_alias()
 
         self._expect(TokenType.ON)
 
@@ -793,7 +798,23 @@ class Parser:
             join_type=join_type,
             left_table=left_table,
             right_table=right_table_alias,
+            alias=alias,
         )
+
+    def _parse_table_alias(self) -> str | None:
+        """Optional name after a table. Qualifiers use this name instead of the table."""
+        if self._match(TokenType.AS):
+            self._advance()
+            return self._expect(TokenType.IDENTIFIER).value
+        if self._match(TokenType.IDENTIFIER):
+            # CROSS JOIN is not an alias named CROSS. AS cross still is.
+            if (
+                self._current().value.upper() in {'CROSS', 'NATURAL', 'FULL', 'OUTER'}
+                and self._peek().type == TokenType.JOIN
+            ):
+                return None
+            return self._advance().value
+        return None
 
     def _parse_where(self) -> WhereClause:
         """Parse a WHERE clause with AND binding tighter than OR."""

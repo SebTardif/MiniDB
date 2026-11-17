@@ -3,7 +3,7 @@
 import pytest
 
 from minidb_sql import Column, ColumnType, InvalidQueryError, MiniDB, TableNotFoundError
-from minidb_sql.errors import TypeMismatchError
+from minidb_sql.errors import ColumnNotFoundError, SyntaxError_, TypeMismatchError
 
 
 class TestJoins:
@@ -423,3 +423,133 @@ class TestJoins:
         db.execute('INSERT INTO flags2 (id, n) VALUES (11, TRUE)')
         matched = db.query('SELECT flags.id, flags2.id FROM flags JOIN flags2 ON flags.n = flags2.n')
         assert matched == [{'flags.id': 10, 'flags2.id': 11}]
+
+    def test_self_join_keeps_each_alias(self):
+        """FROM kids a JOIN kids b exposes a.name and b.name as different people."""
+        db = MiniDB()
+        db.execute('CREATE TABLE kids (id INTEGER PRIMARY KEY, name STRING, parent_id INTEGER)')
+        db.execute("INSERT INTO kids (id, name, parent_id) VALUES (1, 'Ada', NULL)")
+        db.execute("INSERT INTO kids (id, name, parent_id) VALUES (2, 'Bea', 1)")
+        db.execute("INSERT INTO kids (id, name, parent_id) VALUES (3, 'Cy', 1)")
+
+        rows = db.query("""
+            SELECT a.name, b.name
+            FROM kids a
+            JOIN kids b ON a.parent_id = b.id
+            ORDER BY a.name
+        """)
+        assert rows == [
+            {'a.name': 'Bea', 'b.name': 'Ada'},
+            {'a.name': 'Cy', 'b.name': 'Ada'},
+        ]
+
+        missing = db.query("""
+            SELECT a.name, b.name
+            FROM kids AS a
+            LEFT JOIN kids AS b ON a.parent_id = b.id
+            WHERE a.name = 'Ada'
+        """)
+        assert missing == [{'a.name': 'Ada', 'b.name': None}]
+
+        counted = db.query("""
+            SELECT b.name, COUNT(a.id) AS n
+            FROM kids a
+            JOIN kids b ON a.parent_id = b.id
+            GROUP BY b.name
+        """)
+        assert counted == [{'name': 'Ada', 'n': 2}]
+
+    def test_alias_hides_the_physical_table_name(self, db):
+        """Once a table has an alias, qualifiers use that alias."""
+        rows = db.query("""
+            SELECT u.name, o.product
+            FROM users u
+            JOIN orders o ON u.id = o.user_id
+            WHERE u.name = 'Alice'
+            ORDER BY o.product
+        """)
+        assert [row['product'] for row in rows] == ['Gadget', 'Widget']
+        assert {row['name'] for row in rows} == {'Alice'}
+        with pytest.raises(ColumnNotFoundError):
+            db.query('SELECT users.name FROM users u')
+
+    def test_self_join_without_two_names_is_rejected(self):
+        """Two uses of one table need two qualifiers."""
+        db = MiniDB()
+        db.execute('CREATE TABLE kids (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO kids (id, name) VALUES (1, 'Ada')")
+        with pytest.raises(InvalidQueryError, match="Duplicate table name 'kids'"):
+            db.query('SELECT kids.name FROM kids JOIN kids ON kids.id = kids.id')
+        with pytest.raises(InvalidQueryError, match="Duplicate table name 'a'"):
+            db.query('SELECT a.name FROM kids a JOIN kids a ON a.id = a.id')
+
+    def test_unqualified_on_uses_alias_scope(self, db):
+        """ON id = user_id still means the already joined table when that table has an alias."""
+        rows = db.query("""
+            SELECT u.name, o.product
+            FROM users u
+            JOIN orders o ON id = user_id
+            WHERE u.name = 'Alice'
+            ORDER BY o.product
+        """)
+        assert [row['product'] for row in rows] == ['Gadget', 'Widget']
+        assert {row['name'] for row in rows} == {'Alice'}
+
+    def test_unqualified_on_after_a_mixed_alias_stays_ambiguous(self):
+        """A later bare id is ambiguous when an earlier table was aliased."""
+        db = MiniDB()
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER)')
+        db.execute('CREATE TABLE items (id INTEGER PRIMARY KEY, order_id INTEGER)')
+        db.execute("INSERT INTO users (id, name) VALUES (1, 'Ada')")
+        db.execute('INSERT INTO orders (id, user_id) VALUES (10, 1)')
+        db.execute('INSERT INTO items (id, order_id) VALUES (7, 10)')
+        with pytest.raises(InvalidQueryError, match='ambiguous'):
+            db.query("""
+                SELECT items.id
+                FROM users
+                JOIN orders o ON users.id = o.user_id
+                JOIN items ON id = order_id
+            """)
+
+    def test_alias_does_not_read_another_physical_table(self):
+        """An alias that matches a different table name still reads the aliased table."""
+        db = MiniDB()
+        db.execute('CREATE TABLE kids (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, product STRING)')
+        db.execute("INSERT INTO kids (id, name) VALUES (1, 'Ada')")
+        db.execute("INSERT INTO users (id, name) VALUES (9, 'Not Ada')")
+        db.execute("INSERT INTO orders (id, user_id, product) VALUES (10, 1, 'book')")
+        rows = db.query("""
+            SELECT users.name, orders.product
+            FROM kids users
+            JOIN orders ON id = user_id
+        """)
+        assert rows == [{'name': 'Ada', 'product': 'book'}]
+
+    def test_star_self_join_keeps_an_equal_name(self):
+        """SELECT * keeps the other alias when both people have the same name."""
+        db = MiniDB()
+        db.execute('CREATE TABLE kids (id INTEGER PRIMARY KEY, name STRING, parent_id INTEGER)')
+        db.execute("INSERT INTO kids (id, name, parent_id) VALUES (1, 'Ada', NULL)")
+        db.execute("INSERT INTO kids (id, name, parent_id) VALUES (2, 'Ada', 1)")
+        rows = db.query('SELECT * FROM kids a JOIN kids b ON a.parent_id = b.id')
+        assert rows == [
+            {
+                'id': 2,
+                'name': 'Ada',
+                'parent_id': 1,
+                'a.id': 2,
+                'a.name': 'Ada',
+                'a.parent_id': 1,
+                'b.id': 1,
+                'b.name': 'Ada',
+                'b.parent_id': None,
+            }
+        ]
+
+    def test_cross_join_is_not_an_alias(self, db):
+        """CROSS JOIN stays unsupported instead of becoming an alias named CROSS."""
+        with pytest.raises(SyntaxError_, match='CROSS'):
+            db.query('SELECT users.name FROM users CROSS JOIN orders ON users.id = orders.user_id')
