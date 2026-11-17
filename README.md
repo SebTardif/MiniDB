@@ -14,7 +14,7 @@ A miniature in-memory database with SQL-like query support, built from scratch u
 
 ## Features
 
-- **Typed Columns**: INTEGER, STRING, FLOAT, BOOLEAN
+- **Typed Columns**: INTEGER, STRING, FLOAT, BOOLEAN. A boolean is not an integer.
 - **CRUD Operations**: INSERT, SELECT, UPDATE, DELETE
 - **Parameters**: `?` placeholders bound after parse (`execute(sql, params)`)
 - **Transactions**: in-memory `BEGIN` / `COMMIT` / `ROLLBACK` snapshots
@@ -50,7 +50,12 @@ from minidb_sql import MiniDB
 `execute()` runs any statement and returns rows for SELECT, a row id for INSERT,
 an affected-row count for UPDATE and DELETE, or None for CREATE, DROP, BEGIN,
 COMMIT, and ROLLBACK.
-`query()` is SELECT-only and returns rows.
+Empty, whitespace-only, comment-only, and semicolon-only input raises
+`SyntaxError_` with message `Empty statement`. `SyntaxError_` is a `MiniDBError`,
+not the builtin `SyntaxError`.
+`query()` is SELECT-only and returns rows. A non-SELECT passed to `query()`
+raises `MiniDBError` before it changes a row or opens a transaction. Use
+`execute()` for INSERT, UPDATE, DELETE, CREATE, DROP, and BEGIN.
 Both accept an optional `params` sequence for `?` placeholders. Values are bound
 after parse, not interpolated into the SQL string.
 
@@ -223,13 +228,19 @@ WHERE NOT col = value
 WHERE (cond1 OR cond2) AND cond3
 ```
 
+A boolean compares only with a BOOLEAN column. `WHERE id = TRUE` and a join between a boolean and an integer, float, or string raise `TypeMismatchError`. `SUM` and `AVG` raise `TypeMismatchError` when they see a boolean value. An empty group, or a group of only NULL, still returns NULL. `COUNT`, `MIN`, and `MAX` of a boolean still run.
+
 ### ORDER BY
 
 ```sql
 ORDER BY col ASC
 ORDER BY col DESC
 ORDER BY col1 ASC, col2 DESC
+ORDER BY SUM(total) DESC
+ORDER BY COUNT(id)
 ```
+
+An aggregate expression still sorts when the select list gives that aggregate an alias.
 
 ### LIMIT
 

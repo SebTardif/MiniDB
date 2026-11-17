@@ -528,6 +528,51 @@ class TestJoins:
         """)
         assert rows == [{'name': 'Ada', 'product': 'book'}]
 
+    def test_star_join_omits_a_prefix_that_repeats_the_bare_value(self, db):
+        """Unaliased SELECT * keeps the v1.3.1 keys when a qualified value matches."""
+        same = db.query("""
+            SELECT * FROM users
+            JOIN orders ON users.id = orders.user_id
+            WHERE orders.id = 1
+        """)
+        assert set(same[0]) == {'id', 'name', 'email', 'user_id', 'product', 'total'}
+        assert same[0]['id'] == 1
+        assert same[0]['product'] == 'Widget'
+
+        different = db.query("""
+            SELECT * FROM users
+            JOIN orders ON users.id = orders.user_id
+            WHERE orders.id = 2
+        """)
+        assert set(different[0]) == {'id', 'name', 'email', 'user_id', 'product', 'total', 'orders.id'}
+        assert different[0]['id'] == 1
+        assert different[0]['orders.id'] == 2
+
+    def test_star_join_keeps_a_boolean_next_to_a_number(self):
+        """True is not a repeat of 1, and False is not a repeat of 0 or 0.0."""
+        db = MiniDB()
+        db.execute('CREATE TABLE nums (id INTEGER PRIMARY KEY, n INTEGER)')
+        db.execute('CREATE TABLE flags (id INTEGER PRIMARY KEY, num_id INTEGER, n BOOLEAN)')
+        db.execute('INSERT INTO nums (id, n) VALUES (1, 1)')
+        db.execute('INSERT INTO flags (id, num_id, n) VALUES (10, 1, TRUE)')
+        true_row = db.query('SELECT * FROM nums JOIN flags ON nums.id = flags.num_id')[0]
+        assert true_row['n'] == 1
+        assert true_row['flags.n'] is True
+
+        db.execute('UPDATE nums SET n = 0 WHERE id = 1')
+        db.execute('UPDATE flags SET n = FALSE WHERE id = 10')
+        false_row = db.query('SELECT * FROM nums JOIN flags ON nums.id = flags.num_id')[0]
+        assert false_row['n'] == 0
+        assert false_row['flags.n'] is False
+
+        db.execute('CREATE TABLE measures (id INTEGER PRIMARY KEY, n FLOAT)')
+        db.execute('INSERT INTO measures (id, n) VALUES (1, 0.0)')
+        db.execute('CREATE TABLE answers (id INTEGER PRIMARY KEY, measure_id INTEGER, n BOOLEAN)')
+        db.execute('INSERT INTO answers (id, measure_id, n) VALUES (2, 1, FALSE)')
+        float_row = db.query('SELECT * FROM measures JOIN answers ON measures.id = answers.measure_id')[0]
+        assert float_row['n'] == 0.0
+        assert float_row['answers.n'] is False
+
     def test_star_self_join_keeps_an_equal_name(self):
         """SELECT * keeps the other alias when both people have the same name."""
         db = MiniDB()
