@@ -7,6 +7,27 @@ This changelog is updated by
 
 <!-- version list -->
 
+## [1.4.0](https://github.com/SebTardif/MiniDB/compare/v1.3.1...v1.4.0) (2026-11-18)
+
+
+### Features
+
+* accept table aliases so a table can be joined to itself ([#63](https://github.com/SebTardif/MiniDB/issues/63)) ([c919d9d](https://github.com/SebTardif/MiniDB/commit/c919d9d3a9b4e41f94471c933819b85949869372))
+
+
+### Bug Fixes
+
+* accept bare INSERT values, LIMIT parameters, and empty input ([#61](https://github.com/SebTardif/MiniDB/issues/61)) ([ac4d980](https://github.com/SebTardif/MiniDB/commit/ac4d980de6807c737759163783b9050882808b01))
+* accept DEFAULT in CREATE TABLE ([#58](https://github.com/SebTardif/MiniDB/issues/58)) ([6a39a2d](https://github.com/SebTardif/MiniDB/commit/6a39a2d83cdef820a0e576a91aff5d237c3b4702))
+* allow ORDER BY of an aggregate expression ([#57](https://github.com/SebTardif/MiniDB/issues/57)) ([0b4c6d4](https://github.com/SebTardif/MiniDB/commit/0b4c6d4c8d9786c37133c241622d5f8cf0fffcbb))
+* count distinct non-null values ([#60](https://github.com/SebTardif/MiniDB/issues/60)) ([da17d47](https://github.com/SebTardif/MiniDB/commit/da17d47c57b05902f15beb32e32cc42fa9ca7331))
+* do not treat a boolean as an integer ([#54](https://github.com/SebTardif/MiniDB/issues/54)) ([3d02f99](https://github.com/SebTardif/MiniDB/commit/3d02f99c4bda0d4249702f41014d38ef02172c9d))
+* keep a boolean column in an unaliased SELECT * ([#64](https://github.com/SebTardif/MiniDB/issues/64)) ([0d23c4b](https://github.com/SebTardif/MiniDB/commit/0d23c4b166c9c4c76672f9ecf30563afe9f0939e))
+* print finite demo floats with math.isfinite ([#66](https://github.com/SebTardif/MiniDB/issues/66)) ([6c68ca2](https://github.com/SebTardif/MiniDB/commit/6c68ca21810340af53be57542e311549b25092ea))
+* refuse save while a transaction is open ([#56](https://github.com/SebTardif/MiniDB/issues/56)) ([ec40f4e](https://github.com/SebTardif/MiniDB/commit/ec40f4e5a9ebceb7b035f9a732224f5e5a36aae7))
+* reject non-SELECT in query() before it runs ([#62](https://github.com/SebTardif/MiniDB/issues/62)) ([8dc427b](https://github.com/SebTardif/MiniDB/commit/8dc427bd0ceabacc8ae4597c7112f06b6d0ac888))
+* type-check the boolean that is actually compared ([#65](https://github.com/SebTardif/MiniDB/issues/65)) ([1e487f1](https://github.com/SebTardif/MiniDB/commit/1e487f1e24b388f655fb8b4065beca2891ed61ff))
+
 ## [1.3.1](https://github.com/SebTardif/MiniDB/compare/v1.3.0...v1.3.1) (2026-11-09)
 
 
