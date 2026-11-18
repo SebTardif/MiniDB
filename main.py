@@ -12,6 +12,8 @@ Demonstrates all features of MiniDB including:
 - Persistence
 """
 
+import math
+
 from minidb_sql import MiniDB
 
 
@@ -23,8 +25,8 @@ def print_section(title: str):
 
 
 def _cell(value: object) -> str:
-    """Format a float without binary dust such as 139.92000000000002."""
-    if isinstance(value, float) and value == value and value not in (float('inf'), float('-inf')):
+    """Format a finite float without binary dust such as 139.92000000000002."""
+    if isinstance(value, float) and math.isfinite(value):
         return format(value, '.12g')
     return str(value)
 
