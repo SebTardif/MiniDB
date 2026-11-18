@@ -424,6 +424,18 @@ class TestJoins:
         matched = db.query('SELECT flags.id, flags2.id FROM flags JOIN flags2 ON flags.n = flags2.n')
         assert matched == [{'flags.id': 10, 'flags2.id': 11}]
 
+    def test_join_bool_and_int_raises_when_no_boolean_value_is_stored(self):
+        """An empty or all-NULL boolean side still cannot join an integer."""
+        db = MiniDB()
+        db.execute('CREATE TABLE nums (id INTEGER PRIMARY KEY, n INTEGER)')
+        db.execute('CREATE TABLE flags (id INTEGER PRIMARY KEY, n BOOLEAN)')
+        db.execute('INSERT INTO nums (id, n) VALUES (1, 1)')
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT nums.id FROM nums JOIN flags ON nums.n = flags.n')
+        db.execute('INSERT INTO flags (id, n) VALUES (1, NULL)')
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT nums.id FROM nums JOIN flags ON nums.n = flags.n')
+
     def test_self_join_keeps_each_alias(self):
         """FROM kids a JOIN kids b exposes a.name and b.name as different people."""
         db = MiniDB()

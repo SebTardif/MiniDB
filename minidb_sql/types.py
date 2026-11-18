@@ -142,7 +142,6 @@ class TokenType(Enum):
     BEGIN = auto()
     COMMIT = auto()
     ROLLBACK = auto()
-    DEFAULT = auto()
 
     # Literals
     IDENTIFIER = auto()
