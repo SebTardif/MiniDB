@@ -256,7 +256,6 @@ class Lexer:
         'BEGIN': TokenType.BEGIN,
         'COMMIT': TokenType.COMMIT,
         'ROLLBACK': TokenType.ROLLBACK,
-        'DEFAULT': TokenType.DEFAULT,
     }
 
     def __init__(self, sql: str):
@@ -1167,7 +1166,7 @@ class Parser:
                 if primary_key:
                     raise InvalidQueryError(f"PRIMARY KEY column '{name}' cannot be NULL")
                 nullable = True
-            elif self._match(TokenType.DEFAULT):
+            elif self._at_default_clause():
                 if has_default:
                     raise InvalidQueryError(f"Column '{name}' has two DEFAULT clauses")
                 self._advance()
@@ -1186,6 +1185,11 @@ class Parser:
             default=default,
             has_default=has_default,
         )
+
+    def _at_default_clause(self) -> bool:
+        """True when DEFAULT follows a column type. The name default stays an identifier."""
+        token = self._current()
+        return token.type == TokenType.IDENTIFIER and token.value.upper() == 'DEFAULT'
 
     def _parse_drop(self) -> DropTableQuery:
         """Parse a DROP TABLE query."""

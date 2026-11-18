@@ -163,6 +163,8 @@ CREATE TABLE table_name (
 )
 ```
 
+`DEFAULT` after a type is the value used when an INSERT omits that column. The name `default` is still a table or column name.
+
 ### INSERT
 
 ```sql

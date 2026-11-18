@@ -255,6 +255,7 @@ class QueryExecutor:
             right_table = self.tables[join.table]
             right_scope = join.alias or join.table
             left_spec, right_column = self._resolve_join_pair(seen, join, right_table)
+            self._reject_join_schema_mismatch(left_spec[0], left_spec[1], right_table, right_column)
             right_index: dict[Any, list[tuple[int, Row]]] = defaultdict(list)
             for rid, row in right_table.scan():
                 key = row.get(right_column)
@@ -559,12 +560,12 @@ class QueryExecutor:
                 continue
             if not isinstance(cond, Condition):
                 continue
-            if cond.operator not in ('=', '!=', '>', '>=', '<', '<='):
-                continue
-            if not isinstance(cond.value, bool):
+            literals = self._bool_literals(cond)
+            if not literals:
                 continue
             for sample in self._samples_for_column(cond.column, cond.table_alias, known_tables):
-                self._reject_mismatched_compare(cond.column, sample, cond.value)
+                for literal in literals:
+                    self._reject_mismatched_compare(cond.column, sample, literal)
 
     def _samples_for_column(self, column: str, table_alias: str | None, known_tables: set[str]) -> list[Any]:
         tables: list[Table] = []
@@ -573,17 +574,50 @@ class QueryExecutor:
             if found is not None:
                 tables.append(found)
         else:
-            tables.extend(
-                table
-                for name in known_tables
-                if (table := self._table_named(name)) is not None and table.schema.has_column(column)
-            )
+            # The bare name is the first joined table that has it, same as the row.
+            ordered = list(self._bound) if self._bound is not None else list(known_tables)
+            for name in ordered:
+                if name not in known_tables:
+                    continue
+                table = self._table_named(name)
+                if table is not None and table.schema.has_column(column):
+                    tables.append(table)
+                    break
         samples: list[Any] = []
         for table in tables:
             schema_column = table.schema.get_column(column)
             if schema_column is not None:
                 samples.append(_COLUMN_SAMPLE[schema_column.type])
         return samples
+
+    def _bool_literals(self, condition: Condition) -> list[bool]:
+        """Boolean literals in = or IN. True is not the integer 1."""
+        if condition.operator in ('=', '!=', '>', '>=', '<', '<=') and isinstance(condition.value, bool):
+            return [condition.value]
+        if condition.operator == 'IN' and isinstance(condition.value, list):
+            return [item for item in condition.value if isinstance(item, bool)]
+        return []
+
+    def _reject_join_schema_mismatch(
+        self,
+        left_scope: str,
+        left_column: str,
+        right_table: Table,
+        right_column: str,
+    ) -> None:
+        """Reject a boolean joined to another type before any row is read."""
+        left_table = self._table_named(left_scope)
+        if left_table is None:
+            return
+        left_col = left_table.schema.get_column(left_column)
+        right_col = right_table.schema.get_column(right_column)
+        if left_col is None or right_col is None:
+            return
+        self._reject_mismatched_compare(
+            right_column,
+            _COLUMN_SAMPLE[left_col.type],
+            _COLUMN_SAMPLE[right_col.type],
+        )
 
     def _reject_mismatched_compare(self, column: str, left: Any, right: Any) -> None:
         """Reject comparisons that Python would answer with a different type's rules.

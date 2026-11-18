@@ -344,6 +344,28 @@ class TestTypeValidation:
         assert db.query('SELECT id FROM t WHERE n IS NULL') == [{'id': 3}]
         assert db.query('SELECT id FROM t WHERE n IS NOT NULL ORDER BY id') == [{'id': 1}, {'id': 2}]
 
+    def test_where_true_uses_the_bare_column(self):
+        """An unqualified boolean compares with the bare cell, not every same-named column."""
+        db = MiniDB()
+        db.execute('CREATE TABLE flags (id INTEGER PRIMARY KEY, n BOOLEAN)')
+        db.execute('CREATE TABLE nums (id INTEGER PRIMARY KEY, n INTEGER)')
+        db.execute('INSERT INTO flags (id, n) VALUES (1, TRUE)')
+        db.execute('INSERT INTO nums (id, n) VALUES (1, 1)')
+        rows = db.query('SELECT flags.id FROM flags JOIN nums ON flags.id = nums.id WHERE n = TRUE')
+        assert rows == [{'id': 1}]
+        with pytest.raises(TypeMismatchError):
+            db.query('SELECT nums.id FROM nums JOIN flags ON nums.id = flags.id WHERE n = TRUE')
+
+    def test_where_in_true_on_an_empty_integer_raises(self):
+        """IN (TRUE) is a type error before any row is scanned."""
+        db = MiniDB()
+        db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)')
+        with pytest.raises(TypeMismatchError, match=r"column 'id'"):
+            db.query('SELECT id FROM t WHERE id IN (TRUE)')
+        db.execute('CREATE TABLE flags (id INTEGER PRIMARY KEY, n BOOLEAN)')
+        db.execute('INSERT INTO flags (id, n) VALUES (1, TRUE)')
+        assert db.query('SELECT id FROM flags WHERE n IN (TRUE, FALSE)') == [{'id': 1}]
+
     def test_where_equality_different_types_is_false(self):
         """Equality of different types stays false and does not raise."""
         db = MiniDB()

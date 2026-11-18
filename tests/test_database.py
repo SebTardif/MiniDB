@@ -91,6 +91,19 @@ class TestDatabaseLifecycle:
         with pytest.raises(TypeMismatchError):
             db.execute("CREATE TABLE bad (id INTEGER PRIMARY KEY, age INTEGER DEFAULT 'nope')")
 
+    def test_default_is_still_a_column_and_table_name(self):
+        """default is a column or table name. DEFAULT after a type is the clause."""
+        db = MiniDB()
+        db.execute('CREATE TABLE people (id INTEGER PRIMARY KEY, default STRING)')
+        db.execute("INSERT INTO people (id, default) VALUES (1, 'Ada')")
+        assert db.query('SELECT default FROM people') == [{'default': 'Ada'}]
+        db.execute('CREATE TABLE default (id INTEGER PRIMARY KEY, name STRING)')
+        db.execute("INSERT INTO default (id, name) VALUES (1, 'Bea')")
+        assert db.query('SELECT name FROM default') == [{'name': 'Bea'}]
+        db.execute("CREATE TABLE tagged (id INTEGER PRIMARY KEY, default STRING DEFAULT 'Boston')")
+        db.execute('INSERT INTO tagged (id) VALUES (1)')
+        assert db.query('SELECT default FROM tagged') == [{'default': 'Boston'}]
+
     def test_sql_rejects_null_primary_key(self):
         """PRIMARY KEY NULL is a contradiction, so CREATE does not build the table."""
         db = MiniDB()
