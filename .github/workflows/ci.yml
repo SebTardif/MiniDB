@@ -54,6 +54,7 @@ jobs:
               - '.github/actions/**'
               - '.github/zizmor.yml'
               - 'scripts/**'
+              - 'lychee.toml'
               - '.github/actionlint.yaml'
 
   lint:

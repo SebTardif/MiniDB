@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -71,6 +72,7 @@ class WorkflowTriggerTests(unittest.TestCase):
         self.assertIn("- '.github/workflows/**'", block)
         self.assertIn("- '.github/actions/**'", block)
         self.assertIn("- '.github/zizmor.yml'", block)
+        self.assertIn("- 'lychee.toml'", block)
         self.assertNotIn("- 'scripts/test_check_dco.py'", block)
 
     def test_ci_gate_requires_workflow_sanity(self) -> None:
@@ -90,6 +92,26 @@ class WorkflowTriggerTests(unittest.TestCase):
         self.assertNotIn('paths:', pull_request)
         self.assertIn('name: Check Links', text)
         self.assertIn('lychee.toml', text)
+
+    def test_lychee_excludes_release_compare_and_tag_urls(self) -> None:
+        data = tomllib.loads((ROOT / 'lychee.toml').read_text(encoding='utf-8'))
+        excludes = [pattern for pattern in data['exclude'] if isinstance(pattern, str)]
+        compare = next(pattern for pattern in excludes if 'compare/' in pattern)
+        tag = next(pattern for pattern in excludes if 'releases/tag' in pattern)
+        raced = 'https://github.com/SebTardif/MiniDB/compare/v1.3.1...v1.4.0'
+        prefixed = 'https://github.com/SebTardif/MiniDB/compare/minidb-v1.3.1...minidb-v1.4.0'
+        release = 'https://github.com/SebTardif/MiniDB/releases/tag/v1.4.0'
+        issue = 'https://github.com/SebTardif/MiniDB/issues/52'
+        pull = 'https://github.com/SebTardif/MiniDB/pull/55'
+        shas = 'https://github.com/SebTardif/MiniDB/compare/0dbc5f1...6999989'
+        two_dots = 'https://github.com/SebTardif/MiniDB/compare/v1.3.1..v1.4.0'
+        self.assertRegex(raced, compare)
+        self.assertRegex(prefixed, compare)
+        self.assertRegex(release, tag)
+        self.assertNotRegex(raced, tag)
+        for url in (issue, pull, shas, two_dots):
+            self.assertNotRegex(url, compare)
+            self.assertNotRegex(url, tag)
 
     def test_security_keeps_required_codeql_names(self) -> None:
         text = (WORKFLOWS / 'security.yml').read_text(encoding='utf-8')

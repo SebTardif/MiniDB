@@ -11,6 +11,9 @@ exclude = [
   "127\\.0\\.0\\.1",
   "securityscorecards\\.dev",
   "img\\.shields\\.io/endpoint",
+  # Release Please writes compare/vOLD...vNEW before that tag exists.
+  "github\\.com/.*/compare/.*v.*\\.\\.\\..*v",
+  "github\\.com/.*/releases/tag/.*v\\d",
 ]
 
 # Gateway errors from GitHub under load. Retries alone still flake.
